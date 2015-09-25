@@ -1,4 +1,37 @@
     <**/*.ml{,i}>: warn(-40)
 # OASIS_START
+# DO NOT EDIT (digest: 682ea1489da2b0be9af123edac07e7e6)
+# Ignore VCS directories, you can use the same kind of rule outside
+# OASIS_START/STOP if you want to exclude directories that contains
+# useless stuff for the build process
+true: annot, bin_annot
+<**/.svn>: -traverse
+<**/.svn>: not_hygienic
+".bzr": -traverse
+".bzr": not_hygienic
+".hg": -traverse
+".hg": not_hygienic
+".git": -traverse
+".git": not_hygienic
+"_darcs": -traverse
+"_darcs": not_hygienic
+# Library ppx_type_conv
+"src/ppx_type_conv.cmxs": use_ppx_type_conv
+"src/ignore_unused_warning.cmx": for-pack(Ppx_type_conv)
+"src/std.cmx": for-pack(Ppx_type_conv)
+"src/type_conv.cmx": for-pack(Ppx_type_conv)
+"src/type_conv_path.cmx": for-pack(Ppx_type_conv)
+<src/*.ml{,i,y}>: package(compiler-libs)
+<src/*.ml{,i,y}>: package(ppx_core)
+<src/*.ml{,i,y}>: package(ppx_driver)
+<src/*.ml{,i,y}>: package(ppx_tools.metaquot)
+# Library ppx_type_conv_deriving
+"ppx_deriving_exporter/ppx_type_conv_deriving.cmxs": use_ppx_type_conv_deriving
+<ppx_deriving_exporter/*.ml{,i,y}>: package(compiler-libs)
+<ppx_deriving_exporter/*.ml{,i,y}>: package(ppx_core)
+<ppx_deriving_exporter/*.ml{,i,y}>: package(ppx_deriving.api)
+<ppx_deriving_exporter/*.ml{,i,y}>: package(ppx_driver)
+<ppx_deriving_exporter/*.ml{,i,y}>: package(ppx_tools.metaquot)
+<ppx_deriving_exporter/*.ml{,i,y}>: use_ppx_type_conv
 # OASIS_STOP
     
