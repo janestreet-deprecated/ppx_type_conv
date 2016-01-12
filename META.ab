@@ -1,0 +1,16 @@
+version = "$(pkg_version)"
+description = "Support Library for type-driven code generators"
+requires = "ppx_core ppx_driver"
+archive(byte          ) = "ppx_type_conv.cma"
+archive(native        ) = "ppx_type_conv.cmxa"
+archive(native, plugin) = "ppx_type_conv.cmxs"
+exists_if = "ppx_type_conv.cma"
+
+package "for_ppx_deriving" (
+  description = "Don't use this directly"
+  error(ppx_driver) = "Cannot use ppx_type_conv.for_ppx_deriving when ppx_driver is set"
+  requires = "ppx_core.for_ppx_deriving ppx_deriving ppx_driver.for_ppx_deriving"
+  exists_if = "ppx_type_conv.cma"
+  ppxopt = "ppx_deriving,./ppx_type_conv.cma"
+  ppxopt(-ppx_driver) += "ppx_deriving,./ppx_type_conv_deriving.cma"
+)

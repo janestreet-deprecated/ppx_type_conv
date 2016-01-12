@@ -8,13 +8,11 @@ open Asttypes
 open Parsetree
 
 module Spellcheck = Ppx_core.Spellcheck
-module Conv_path  = Type_conv_path
 module String_set = Set.Make (String)
 
 module List = struct
   include List
   let concat_map xs ~f = concat (map xs ~f)
-  let filter_map xs ~f = concat_map xs ~f:(fun x -> match f x with None -> [] | Some y -> [y])
 end
 
 [@@@metaloc loc]
@@ -111,31 +109,9 @@ module Export_intf = struct
   end
 end
 
-module Generator_result = struct
-  type 'a t =
-    { just_after : 'a
-    ; at_the_end : 'a
-    }
-
-  let make_just_after xs = { just_after = xs; at_the_end = [] }
-  let make_at_the_end xs = { just_after = []; at_the_end = xs }
-
-  let nil = { just_after = []; at_the_end = [] }
-
-  let just_after t = t.just_after
-  let at_the_end t = t.at_the_end
-
-  let concat l =
-    { just_after = List.map l ~f:just_after |> List.concat
-    ; at_the_end = List.map l ~f:at_the_end |> List.concat
-    }
-
-  let export_for_ppx_deriving t = t.just_after @ t.at_the_end
-end
-
 module Generator = struct
   type ('a, 'b, 'c) unpacked =
-    { spec           : ('c, 'a Generator_result.t) Args.t
+    { spec           : ('c, 'a) Args.t
     ; gen            : loc:Location.t -> path:string -> 'b -> 'c
     ; arg_names      : String_set.t
     ; attributes     : Attribute.packed list
@@ -199,13 +175,12 @@ module Generator = struct
         generators
         |> List.map ~f:(fun t -> apply t ~name:name.txt ~loc ~path entry args)
     in
-    Generator_result.concat results
+    List.concat results
   ;;
 
   let apply_all ?rev ~loc ~path entry generators =
     let generators = List.rev generators in
-    List.map generators ~f:(apply_all ?rev ~loc ~path entry)
-    |> Generator_result.concat
+    List.concat_map generators ~f:(apply_all ?rev ~loc ~path entry)
   ;;
 end
 
@@ -372,19 +347,15 @@ module Deriver = struct
       map_option gens ~f:(fun gens ->
         fun ~options ~path tds ->
           let path = import_path path in
-          List.map gens ~f:(fun gen ->
-            Generator.apply gen ~name ~loc:Location.none ~path (Recursive, tds) options)
-          |> Generator_result.concat
-          |> Generator_result.export_for_ppx_deriving)
+          List.concat_map gens ~f:(fun gen ->
+            Generator.apply gen ~name ~loc:Location.none ~path (Recursive, tds) options))
     in
     let make_type_ext gens =
       map_option gens ~f:(fun gens ->
         fun ~options ~path te ->
           let path = import_path path in
-          List.map gens ~f:(fun gen ->
-            Generator.apply gen ~name ~loc:Location.none ~path te options)
-          |> Generator_result.concat
-          |> Generator_result.export_for_ppx_deriving)
+          List.concat_map gens ~f:(fun gen ->
+            Generator.apply gen ~name ~loc:Location.none ~path te options))
     in
     let type_decl_str = make_type_decl str_type_decl in
     let type_decl_sig = make_type_decl sig_type_decl in
@@ -443,8 +414,8 @@ module Deriver = struct
      | None -> ()
      | Some _ ->
        (* For the spellcheck *)
-       let _ : _ Extension.t =
-         Extension.declare name Extension.Context.expression
+       let _ : _ Extension.Expert.t =
+         Extension.Expert.declare name Extension.Context.expression
            Ast_pattern.(ptyp __) (fun _ -> assert false)
        in
        ());
@@ -595,15 +566,11 @@ let disable_unused_warning_str ~loc st =
 ;;
 
 let disable_unused_warning_sig ~loc sg =
-  if not do_insert_unused_warning_attribute
-  then
-    Ignore_unused_warning.mark_values#signature sg
-  else
-    [psig_include ~loc
-       (include_infos ~loc
-          (pmty_signature ~loc
-             (psig_attribute ~loc (disable_unused_warning_attribute ~loc)
-              :: sg)))]
+  [psig_include ~loc
+     (include_infos ~loc
+        (pmty_signature ~loc
+           (psig_attribute ~loc (disable_unused_warning_attribute ~loc)
+            :: sg)))]
 ;;
 
 (* +-----------------------------------------------------------------+
@@ -612,10 +579,8 @@ let disable_unused_warning_sig ~loc sg =
 
 let remove generators =
   let attributes =
-    List.map generators ~f:(fun (_, actual_generators, _) ->
-      List.map actual_generators ~f:(fun (Generator.T g) -> g.attributes)
-      |> List.flatten)
-    |> List.flatten
+    List.concat_map generators ~f:(fun (_, actual_generators, _) ->
+      List.concat_map actual_generators ~f:(fun (Generator.T g) -> g.attributes))
   in
   object
     inherit Ast_traverse.map
@@ -632,46 +597,19 @@ let remove generators =
   end
 
 (* +-----------------------------------------------------------------+
-   | Avoid generated sig items which coincide with user items
-   +-----------------------------------------------------------------+ *)
-
-let collect_sig_item_names : signature -> string list =
-  List.filter_map ~f:(function
-    | { psig_desc = Psig_value { pval_name ; _ }; _} -> Some pval_name.txt
-    | _ -> None)
-
-let filter_sig_items (pred: string -> bool) : signature -> signature =
-  List.filter ~f:(function
-    | { psig_desc = Psig_value { pval_name ; _ }; _} -> pred pval_name.txt
-    | _ -> true)
-
-let append_sigs_removing_dups (sig1:signature) (sig2:signature): signature =
-  (* Combine signatures [sig1] and [sig2], removing items in [sig1] which would be
-     shadowed by items in [sig2]. *)
-  let pred =
-    let set = String_set.of_list (collect_sig_item_names sig2) in
-    fun x -> not (String_set.mem x set)
-  in
-  filter_sig_items pred sig1 @ sig2
-
-(* +-----------------------------------------------------------------+
    | Main expansion                                                  |
    +-----------------------------------------------------------------+ *)
 
 let types_used_by_type_conv (tds : type_declaration list)
-    : structure_item list Generator_result.t =
-  Generator_result.make_just_after (
-    List.map tds ~f:(fun td ->
-      let typ = core_type_of_type_declaration td in
-      let loc = td.ptype_loc in
-      let exp = [%expr fun (_ : [%t typ]) -> () ] in
-      Ignore_unused_warning.value_user ~loc exp
-    ))
+    : structure_item list =
+  List.map tds ~f:(fun td ->
+    let typ = core_type_of_type_declaration td in
+    let loc = td.ptype_loc in
+    [%stri let _ = fun (_ : [%t typ]) -> () ]
+  )
 
-type where = Impl | Intf
-
-let expand_with_defs (where:where) = object
-  inherit Conv_path.map as super
+let expand_with_defs = object
+  inherit Ast_traverse.map_with_path as super
 
   method! module_expr_desc path me =
     match me with
@@ -685,141 +623,101 @@ let expand_with_defs (where:where) = object
     Deriver.map_expression path (super#expression path e)
 
   method! structure path st =
-    let rec loop items ~at_the_end =
-      match items with
-      | [] -> disable_unused_warning_str ~loc:Location.none (List.rev at_the_end)
-      | item :: rest -> loop_item item rest ~at_the_end
-
-    and loop_item item rest ~at_the_end =
+    List.concat_map st ~f:(fun item ->
       let item = super#structure_item path item in
       let loc = item.pstr_loc in
       match item.pstr_desc with
       | Pstr_type tds ->
         begin match get_str_type_decl_derivers tds with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (tds, generators) ->
           let rec_flag = get_rec_flag tds in
           let generated =
-            Generator_result.concat [
-              types_used_by_type_conv tds;
-              Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
-            ]
+            types_used_by_type_conv tds
+            @ Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
           in
           let tds = List.map tds ~f:(remove generators)#type_declaration in
           let item = { item with pstr_desc = Pstr_type tds } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_str ~loc generated
         end
 
       | Pstr_exception ec ->
         begin match get_str_exception_derivers ec with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (ec, generators) ->
           let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
           let ec = (remove generators)#extension_constructor ec in
           let item = { item with pstr_desc = Pstr_exception ec } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_str ~loc generated
         end
 
       | Pstr_typext te ->
         begin match get_str_type_ext_derivers te with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (te, generators) ->
           let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
           let te = (remove generators)#type_extension te in
           let item = { item with pstr_desc = Pstr_typext te } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_str ~loc generated
         end
 
       | _ ->
-        item :: loop rest ~at_the_end
-
-    and loop_with_generated ~loc generated rest ~at_the_end =
-      let at_the_end = List.rev_append generated.at_the_end at_the_end in
-      disable_unused_warning_str ~loc generated.just_after
-      @ loop rest ~at_the_end
-
-    in
-    loop st ~at_the_end:[]
+        [item]
+    )
 
   method! signature path sg =
-    let rec loop items ~at_the_end =
-      match items with
-      | [] -> disable_unused_warning_sig ~loc:Location.none (List.rev at_the_end)
-      | item :: rest -> loop_item item rest ~at_the_end
-
-    and loop_item item rest ~at_the_end =
+    List.concat_map sg ~f:(fun item ->
       let item = super#signature_item path item in
       let loc = item.psig_loc in
       match item.psig_desc with
       | Psig_type tds ->
         begin match get_sig_type_decl_derivers tds with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (tds, generators) ->
           let rec_flag = get_rec_flag tds in
           let generated = Generator.apply_all ~loc ~path (rec_flag, tds) generators in
           let tds = List.map tds ~f:(remove generators)#type_declaration in
           let item = { item with psig_desc = Psig_type tds } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_sig ~loc generated
         end
 
       | Psig_exception ec ->
         begin match get_sig_exception_derivers ec with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (ec, generators) ->
           let generated = Generator.apply_all ~loc ~path ec generators in
           let ec = (remove generators)#extension_constructor ec in
           let item = { item with psig_desc = Psig_exception ec } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_sig ~loc generated
         end
 
       | Psig_typext te ->
         begin match get_sig_type_ext_derivers te with
-        | None ->
-          item :: loop rest ~at_the_end
+        | None -> [item]
         | Some (te, generators) ->
           let generated = Generator.apply_all ~loc ~path te generators in
           let te = (remove generators)#type_extension te in
           let item = { item with psig_desc = Psig_typext te } in
-          item :: loop_with_generated ~loc generated rest ~at_the_end
+          item :: disable_unused_warning_sig ~loc generated
         end
 
       | _ ->
-        item :: loop rest ~at_the_end
-
-    and loop_with_generated ~loc generated rest ~at_the_end =
-      let at_the_end = List.rev_append generated.at_the_end at_the_end in
-
-      let sig1 = disable_unused_warning_sig ~loc generated.just_after in
-      let sig2 = loop rest ~at_the_end in
-      match where with
-      | Impl -> append_sigs_removing_dups sig1 sig2
-      | Intf -> sig1 @ sig2
-    in
-    loop sg ~at_the_end:[]
+        [item]
+    )
 end
 
 let main_mapper_str st =
-  let path = Conv_path.get_default_path_str st in
-  let st = (expand_with_defs Impl) #structure path st in
-  let st = Ignore_unused_warning.add_dummy_user_for_marked_values#structure st in
-  Ignore_unused_warning.strip#structure st
+  let path = File_path.get_default_path_str st in
+  expand_with_defs #structure path st
 ;;
 
 let main_mapper_sig sg =
-  let path = Conv_path.get_default_path_sig sg in
-  let sg = (expand_with_defs Intf) #signature path sg in
-  let sg = Ignore_unused_warning.add_dummy_user_for_marked_values#signature sg in
-  Ignore_unused_warning.strip#signature sg
+  let path = File_path.get_default_path_sig sg in
+  expand_with_defs #signature path sg
 ;;
 
 let () =
-  Ppx_driver.register_code_transformation
-    ~name:"type_conv"
+  Ppx_driver.register_transformation "type_conv"
     ~impl:main_mapper_str
     ~intf:main_mapper_sig
 ;;

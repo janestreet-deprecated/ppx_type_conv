@@ -1,8 +1,0 @@
-version = "113.09.00"
-description = "Support Library for type-driven code generators"
-requires = "compiler-libs ppx_core ppx_driver"
-archive(ppx_driver, byte          ) = "ppx_type_conv.cma"
-archive(ppx_driver, native        ) = "ppx_type_conv.cmxa"
-archive(ppx_driver, native, plugin) = "ppx_type_conv.cmxs"
-exists_if = "ppx_type_conv.cma"
-ppxopt(-ppx_driver) = "ppx_deriving,./ppx_type_conv.cma ppx_deriving,./ppx_type_conv_deriving.cma"

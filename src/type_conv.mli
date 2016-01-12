@@ -41,30 +41,18 @@ end
 
 type t (** Type of registered type-conv derivers *)
 
-module Generator_result : sig
-  type 'a t =
-    { just_after : 'a (** Things to add just after the type                           *)
-    ; at_the_end : 'a (** Things to add at the end of the current structure/signature *)
-    }
-
-  val make_just_after : 'a list -> 'a list t
-  val make_at_the_end : 'a list -> 'a list t
-
-  val nil : 'a list t
-end
-
 module Generator : sig
   type ('output_ast, 'input_ast) t
 
   val make
     :  ?attributes:Attribute.packed list
-    -> ('f, 'output_ast Generator_result.t) Args.t
+    -> ('f, 'output_ast) Args.t
     -> (loc:Location.t -> path:string -> 'input_ast -> 'f)
     -> ('output_ast, 'input_ast) t
 
   val make_noarg
     :  ?attributes:Attribute.packed list
-    -> (loc:Location.t -> path:string -> 'input_ast -> 'output_ast Generator_result.t)
+    -> (loc:Location.t -> path:string -> 'input_ast -> 'output_ast)
     -> ('output_ast, 'input_ast) t
 
   val apply
@@ -74,7 +62,7 @@ module Generator : sig
     -> path:string
     -> 'input_ast
     -> (string * expression) list
-    -> 'output_ast Generator_result.t
+    -> 'output_ast
 end
 
 
