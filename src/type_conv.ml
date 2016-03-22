@@ -472,9 +472,10 @@ let mk_deriving_attr context =
     Ast_pattern.(
       let label =
         map' __ ~f:(fun loc f label ->
-          if label = "" || label.[0] = '?' then
+          match label with
+          | Nolabel | Optional _ ->
             Location.raise_errorf ~loc "non-optional labeled argument expected"
-          else
+          | Labelled label ->
             f label)
       in
       let generator_name () =
@@ -529,16 +530,6 @@ let get_str_type_ext_derivers  = get_derivers deriving_attr_te Deriver.Field.str
 let get_sig_type_ext_derivers  = get_derivers deriving_attr_te Deriver.Field.sig_type_ext
 let get_str_exception_derivers = get_derivers deriving_attr_ec Deriver.Field.str_exception
 let get_sig_exception_derivers = get_derivers deriving_attr_ec Deriver.Field.sig_exception
-
-let get_rec_flag tds =
-  let has_nonrec td =
-    List.exists td.ptype_attributes ~f:(fun (name, _) -> name.txt = "nonrec")
-  in
-  if List.exists tds ~f:has_nonrec then
-    Nonrecursive
-  else
-    Recursive
-;;
 
 (* +-----------------------------------------------------------------+
    | Unused warning stuff                                            |
@@ -627,17 +618,16 @@ let expand_with_defs = object
       let item = super#structure_item path item in
       let loc = item.pstr_loc in
       match item.pstr_desc with
-      | Pstr_type tds ->
+      | Pstr_type (rec_flag, tds) ->
         begin match get_str_type_decl_derivers tds with
         | None -> [item]
         | Some (tds, generators) ->
-          let rec_flag = get_rec_flag tds in
           let generated =
             types_used_by_type_conv tds
             @ Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
           in
           let tds = List.map tds ~f:(remove generators)#type_declaration in
-          let item = { item with pstr_desc = Pstr_type tds } in
+          let item = { item with pstr_desc = Pstr_type (rec_flag, tds) } in
           item :: disable_unused_warning_str ~loc generated
         end
 
@@ -670,14 +660,13 @@ let expand_with_defs = object
       let item = super#signature_item path item in
       let loc = item.psig_loc in
       match item.psig_desc with
-      | Psig_type tds ->
+      | Psig_type (rec_flag, tds) ->
         begin match get_sig_type_decl_derivers tds with
         | None -> [item]
         | Some (tds, generators) ->
-          let rec_flag = get_rec_flag tds in
           let generated = Generator.apply_all ~loc ~path (rec_flag, tds) generators in
           let tds = List.map tds ~f:(remove generators)#type_declaration in
-          let item = { item with psig_desc = Psig_type tds } in
+          let item = { item with psig_desc = Psig_type (rec_flag, tds) } in
           item :: disable_unused_warning_sig ~loc generated
         end
 
