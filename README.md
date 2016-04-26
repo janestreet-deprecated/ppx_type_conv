@@ -18,7 +18,7 @@ libraries currently depending on `type_conv`:
 -----------------------------------------------------------------------------------
 
 `type_conv` based code generators are meant to be used with
-[ppx_driver](https://github.com/janestreet/ppx_driver). However
+[ppx_driver://github.com/janestreet/ppx_driver). However
 `type_conv` allows to export a compatible `ppx_deriving` plugin.
 By default, when not linked as part of a driver, packages using
 `type_conv` will just use ppx_deriving.
@@ -80,6 +80,12 @@ following syntax:
 ```ocaml
 type t = A | B [@@deriving foo ~bar]
 ```
+
+Plugin as findlib libraryes
+---------------------------
+
+You must essentially follow the same rule for ppx\_type\_conv plugins
+as for ppx\_driver ones when writing the META file.
 
 Contact Information and Contributing
 ------------------------------------

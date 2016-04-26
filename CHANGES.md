@@ -1,3 +1,8 @@
+## 113.33.01
+
+- Make the ppx\_deriving glue more resilient to small changes in
+  ppx\_deriving. Related to whitequark/ppx_deriving#94
+
 ## 113.24.00
 
 - Kill the nonrec rewrite done by typerep. It is no longer needed since
