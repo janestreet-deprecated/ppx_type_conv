@@ -1,3 +1,12 @@
+## 113.43.00
+
+- Use the new context-free API
+
+- Change a behavior in ppx\_type\_conv: attributes inside the type
+  definition such as `@default` are not removed. This is not really a
+  big deal as we still check that they are used. We could restore this
+  bevavior with a full pass at the end to remove used attributes.
+
 ## 113.33.01
 
 - Make the ppx\_deriving glue more resilient to small changes in
