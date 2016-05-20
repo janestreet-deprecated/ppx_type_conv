@@ -30,11 +30,11 @@ let add_dummy_user_for_values = object
           List.fold_left vbs ~init:[] ~f:(fun acc vb -> vars_of#pattern vb.pvb_pat acc)
         in
         let ign =
-          pstr_value ~loc Nonrecursive
+          pstr_value_list ~loc Nonrecursive
             (List.rev_map vars ~f:(fun v ->
                underscore_binding (pexp_ident ~loc:v.loc v)))
         in
-        loop rest (ign :: item :: acc)
+        loop rest (ign @ (item :: acc))
       | item :: rest ->
         loop rest (item :: acc)
     in

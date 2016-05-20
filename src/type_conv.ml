@@ -13,6 +13,14 @@ module String_set = Set.Make (String)
 module List = struct
   include List
   let concat_map xs ~f = concat (map xs ~f)
+
+  let rec filter_map l ~f =
+    match l with
+    | [] -> []
+    | x :: l ->
+      match f x with
+      | None   ->      filter_map l ~f
+      | Some y -> y :: filter_map l ~f
 end
 
 [@@@metaloc loc]
@@ -248,22 +256,6 @@ module Deriver = struct
 
   let all : (string, t) Hashtbl.t = Hashtbl.create 42
 
-  let map_expression path e =
-    match e with
-    | { pexp_desc = Pexp_extension (name, PTyp typ); _ } ->
-      begin match Hashtbl.find all name.txt with
-      | exception Not_found -> e
-      | Alias _ -> e
-      | Actual_deriver drv ->
-        match drv.extension with
-        | None -> e
-        | Some f ->
-          let e' = f ~loc:e.pexp_loc ~path typ in
-          { e' with pexp_attributes = e'.pexp_attributes @ e.pexp_attributes }
-      end
-    | _ -> e
-  ;;
-
   exception Not_supported of string
 
   let resolve_internal (field : (_, _) Field.t) name =
@@ -412,13 +404,10 @@ module Deriver = struct
     safe_add name (Actual_deriver actual_deriver);
     (match extension with
      | None -> ()
-     | Some _ ->
-       (* For the spellcheck *)
-       let _ : _ Extension.Expert.t =
-         Extension.Expert.declare name Extension.Context.expression
-           Ast_pattern.(ptyp __) (fun _ -> assert false)
-       in
-       ());
+     | Some f ->
+       let extension = Extension.declare name Expression Ast_pattern.(ptyp __) f in
+       Ppx_driver.register_transformation ("ppx_type_conv." ^ name)
+         ~rules:[ Context_free.Rule.extension extension ]);
     name
   ;;
 
@@ -498,48 +487,6 @@ let deriving_attr_td = mk_deriving_attr Attribute.Context.type_declaration
 let deriving_attr_te = mk_deriving_attr Attribute.Context.type_extension
 let deriving_attr_ec = mk_deriving_attr Attribute.Context.extension_constructor
 
-let get_derivers_tds field tds =
-  let rec loop tds =
-    match tds with
-    | [] -> ([], [])
-    | td :: tds ->
-      let td, gens =
-        match Attribute.consume deriving_attr_td td with
-        | None -> (td, [])
-        | Some x -> x
-      in
-      let tds, gens' = loop tds in
-      (td :: tds, gens @ gens')
-  in
-  match loop tds with
-  | _  , []   -> None
-  | tds, gens -> Some (tds, Deriver.resolve_all field gens)
-;;
-
-let get_str_type_decl_derivers = get_derivers_tds Deriver.Field.str_type_decl
-let get_sig_type_decl_derivers = get_derivers_tds Deriver.Field.sig_type_decl
-
-let get_derivers attr field x =
-  match Attribute.consume attr x with
-  | None           -> None
-  | Some (x, drvs) -> Some (x, Deriver.resolve_all field drvs)
-;;
-
-let get_str_type_ext_derivers  = get_derivers deriving_attr_te Deriver.Field.str_type_ext
-let get_sig_type_ext_derivers  = get_derivers deriving_attr_te Deriver.Field.sig_type_ext
-let get_str_exception_derivers = get_derivers deriving_attr_ec Deriver.Field.str_exception
-let get_sig_exception_derivers = get_derivers deriving_attr_ec Deriver.Field.sig_exception
-
-let get_rec_flag tds =
-  let has_nonrec td =
-    List.exists td.ptype_attributes ~f:(fun (name, _) -> name.txt = "nonrec")
-  in
-  if List.exists tds ~f:has_nonrec then
-    Nonrecursive
-  else
-    Recursive
-;;
-
 (* +-----------------------------------------------------------------+
    | Unused warning stuff                                            |
    +-----------------------------------------------------------------+ *)
@@ -576,7 +523,7 @@ let disable_unused_warning_sig ~loc sg =
 (* +-----------------------------------------------------------------+
    | Remove attributes used by syntax extensions                     |
    +-----------------------------------------------------------------+ *)
-
+(*
 let remove generators =
   let attributes =
     List.concat_map generators ~f:(fun (_, actual_generators, _) ->
@@ -595,7 +542,7 @@ let remove generators =
     method! constructor_declaration cd =
       Attribute.remove_seen Attribute.Context.constructor_declaration attributes cd
   end
-
+*)
 (* +-----------------------------------------------------------------+
    | Main expansion                                                  |
    +-----------------------------------------------------------------+ *)
@@ -608,119 +555,67 @@ let types_used_by_type_conv (tds : type_declaration list)
     [%stri let _ = fun (_ : [%t typ]) -> () ]
   )
 
-let expand_with_defs = object
-  inherit Ast_traverse.map_with_path as super
+let merge_generators field l =
+  List.filter_map l ~f:(fun x -> x)
+  |> List.concat
+  |> Deriver.resolve_all field
 
-  method! module_expr_desc path me =
-    match me with
-    | Pmod_constraint (me, mt) ->
-      let mt = super#module_type path mt in
-      let me = super#module_expr path me in
-      Pmod_constraint (me, mt)
-    | _ -> super#module_expr_desc path me
+let expand_str_type_decls ~loc ~path rec_flag tds values =
+  let generators = merge_generators Deriver.Field.str_type_decl values in
+  let generated =
+    types_used_by_type_conv tds
+    @ Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
+  in
+  disable_unused_warning_str ~loc generated
 
-  method! expression path e =
-    Deriver.map_expression path (super#expression path e)
+let expand_sig_type_decls ~loc ~path rec_flag tds values =
+  let generators = merge_generators Deriver.Field.sig_type_decl values in
+  let generated = Generator.apply_all ~loc ~path (rec_flag, tds) generators in
+  disable_unused_warning_sig ~loc generated
 
-  method! structure path st =
-    List.concat_map st ~f:(fun item ->
-      let item = super#structure_item path item in
-      let loc = item.pstr_loc in
-      match item.pstr_desc with
-      | Pstr_type tds ->
-        begin match get_str_type_decl_derivers tds with
-        | None -> [item]
-        | Some (tds, generators) ->
-          let rec_flag = get_rec_flag tds in
-          let generated =
-            types_used_by_type_conv tds
-            @ Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
-          in
-          let tds = List.map tds ~f:(remove generators)#type_declaration in
-          let item = { item with pstr_desc = Pstr_type tds } in
-          item :: disable_unused_warning_str ~loc generated
-        end
+let expand_str_exception ~loc ~path ec generators =
+  let generators = Deriver.resolve_all Deriver.Field.str_exception generators in
+  let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
+  disable_unused_warning_str ~loc generated
 
-      | Pstr_exception ec ->
-        begin match get_str_exception_derivers ec with
-        | None -> [item]
-        | Some (ec, generators) ->
-          let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
-          let ec = (remove generators)#extension_constructor ec in
-          let item = { item with pstr_desc = Pstr_exception ec } in
-          item :: disable_unused_warning_str ~loc generated
-        end
+let expand_sig_exception ~loc ~path ec generators =
+  let generators = Deriver.resolve_all Deriver.Field.sig_exception generators in
+  let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
+  disable_unused_warning_sig ~loc generated
 
-      | Pstr_typext te ->
-        begin match get_str_type_ext_derivers te with
-        | None -> [item]
-        | Some (te, generators) ->
-          let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
-          let te = (remove generators)#type_extension te in
-          let item = { item with pstr_desc = Pstr_typext te } in
-          item :: disable_unused_warning_str ~loc generated
-        end
+let expand_str_type_ext ~loc ~path te generators =
+  let generators = Deriver.resolve_all Deriver.Field.str_type_ext generators in
+  let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
+  disable_unused_warning_str ~loc generated
 
-      | _ ->
-        [item]
-    )
-
-  method! signature path sg =
-    List.concat_map sg ~f:(fun item ->
-      let item = super#signature_item path item in
-      let loc = item.psig_loc in
-      match item.psig_desc with
-      | Psig_type tds ->
-        begin match get_sig_type_decl_derivers tds with
-        | None -> [item]
-        | Some (tds, generators) ->
-          let rec_flag = get_rec_flag tds in
-          let generated = Generator.apply_all ~loc ~path (rec_flag, tds) generators in
-          let tds = List.map tds ~f:(remove generators)#type_declaration in
-          let item = { item with psig_desc = Psig_type tds } in
-          item :: disable_unused_warning_sig ~loc generated
-        end
-
-      | Psig_exception ec ->
-        begin match get_sig_exception_derivers ec with
-        | None -> [item]
-        | Some (ec, generators) ->
-          let generated = Generator.apply_all ~loc ~path ec generators in
-          let ec = (remove generators)#extension_constructor ec in
-          let item = { item with psig_desc = Psig_exception ec } in
-          item :: disable_unused_warning_sig ~loc generated
-        end
-
-      | Psig_typext te ->
-        begin match get_sig_type_ext_derivers te with
-        | None -> [item]
-        | Some (te, generators) ->
-          let generated = Generator.apply_all ~loc ~path te generators in
-          let te = (remove generators)#type_extension te in
-          let item = { item with psig_desc = Psig_typext te } in
-          item :: disable_unused_warning_sig ~loc generated
-        end
-
-      | _ ->
-        [item]
-    )
-end
-
-let main_mapper_str st =
-  let path = File_path.get_default_path_str st in
-  expand_with_defs #structure path st
-;;
-
-let main_mapper_sig sg =
-  let path = File_path.get_default_path_sig sg in
-  expand_with_defs #signature path sg
-;;
+let expand_sig_type_ext ~loc ~path te generators =
+  let generators = Deriver.resolve_all Deriver.Field.sig_type_ext generators in
+  let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
+  disable_unused_warning_sig ~loc generated
 
 let () =
   Ppx_driver.register_transformation "type_conv"
-    ~impl:main_mapper_str
-    ~intf:main_mapper_sig
+    ~rules:[ Context_free.Rule.attr_str_type_decl
+               deriving_attr_td
+               expand_str_type_decls
+           ; Context_free.Rule.attr_sig_type_decl
+               deriving_attr_td
+               expand_sig_type_decls
+           ; Context_free.Rule.attr_str_type_ext
+               deriving_attr_te
+               expand_str_type_ext
+           ; Context_free.Rule.attr_sig_type_ext
+               deriving_attr_te
+               expand_sig_type_ext
+           ; Context_free.Rule.attr_str_exception
+               deriving_attr_ec
+               expand_str_exception
+           ; Context_free.Rule.attr_sig_exception
+               deriving_attr_ec
+               expand_sig_exception
+           ]
 ;;
+
 
 module Ppx_deriving_exporter = struct
   include Export_intf

@@ -81,7 +81,7 @@ following syntax:
 type t = A | B [@@deriving foo ~bar]
 ```
 
-Plugin as findlib libraryes
+Plugin as findlib libraries
 ---------------------------
 
 You must essentially follow the same rule for ppx\_type\_conv plugins
