@@ -16,3 +16,14 @@ package "for_ppx_deriving" (
   ppxopt(-custom_ppx) = "ppx_deriving,./ppx_type_conv.cma"
   ppxopt(-ppx_driver,-custom_ppx) += "ppx_deriving,./ppx_type_conv_deriving.cma"
 )
+
+package "deriving" (
+  version = "$(pkg_version)"
+  description = ""
+  requires = "ppx_deriving.api ppx_type_conv"
+  archive(byte  ) = "ppx_type_conv_deriving.cma"
+  archive(native) = "ppx_type_conv_deriving.cmxa"
+  plugin(byte  ) = "ppx_type_conv_deriving.cma"
+  plugin(native) = "ppx_type_conv_deriving.cmxs"
+  exists_if = "ppx_type_conv_deriving.cma"
+)
