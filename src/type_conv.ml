@@ -461,9 +461,10 @@ let mk_deriving_attr context =
     Ast_pattern.(
       let label =
         map' __ ~f:(fun loc f label ->
-          if label = "" || label.[0] = '?' then
+          match label with
+          | Nolabel | Optional _ ->
             Location.raise_errorf ~loc "non-optional labeled argument expected"
-          else
+          | Labelled label ->
             f label)
       in
       let generator_name () =
