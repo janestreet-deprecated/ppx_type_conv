@@ -141,7 +141,7 @@ module Generator = struct
 
   let make_noarg ?attributes gen = make ?attributes Args.empty gen
 
-  let check_arguments t name (args : (string * expression) list) =
+  let check_arguments name generators (args : (string * expression) list) =
     List.iter args ~f:(fun (label, e) ->
       if label = "" then
         Location.raise_errorf ~loc:e.pexp_loc
@@ -154,10 +154,14 @@ module Generator = struct
         String_set.add label set)
       : String_set.t
     );
+    let accepted_args =
+      List.fold_left generators ~init:String_set.empty ~f:(fun set (T t) ->
+        String_set.union set t.arg_names)
+    in
     List.iter args ~f:(fun (label, e) ->
-      if not (String_set.mem label t.arg_names) then
+      if not (String_set.mem label accepted_args) then
         let spellcheck_msg =
-          match Spellcheck.spellcheck (String_set.elements t.arg_names) label with
+          match Spellcheck.spellcheck (String_set.elements accepted_args) label with
           | None -> ""
           | Some s -> ".\n" ^ s
         in
@@ -166,12 +170,12 @@ module Generator = struct
           name label spellcheck_msg);
   ;;
 
-  let apply (T t) ~name ~loc ~path x args =
-    check_arguments t name args;
+  let apply (T t) ~name:_ ~loc ~path x args =
     Args.apply t.spec args (t.gen ~loc ~path x)
   ;;
 
   let apply_all ?(rev=false) ~loc ~path entry (name, generators, args) =
+    check_arguments name.txt generators args;
     let results =
       if rev
       then
@@ -338,6 +342,7 @@ module Deriver = struct
     let make_type_decl gens =
       map_option gens ~f:(fun gens ->
         fun ~options ~path tds ->
+          Generator.check_arguments name gens options;
           let path = import_path path in
           List.concat_map gens ~f:(fun gen ->
             Generator.apply gen ~name ~loc:Location.none ~path (Recursive, tds) options))
@@ -345,6 +350,7 @@ module Deriver = struct
     let make_type_ext gens =
       map_option gens ~f:(fun gens ->
         fun ~options ~path te ->
+          Generator.check_arguments name gens options;
           let path = import_path path in
           List.concat_map gens ~f:(fun gen ->
             Generator.apply gen ~name ~loc:Location.none ~path te options))
