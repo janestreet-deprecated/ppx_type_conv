@@ -1,21 +1,13 @@
 version = "$(pkg_version)"
 description = "Support Library for type-driven code generators"
 requires = "compiler-libs.common ppx_core ppx_driver"
+requires(-ppx_driver,-custom_ppx) += "ppx_deriving"
 archive(byte  ) = "ppx_type_conv.cma"
 archive(native) = "ppx_type_conv.cmxa"
 plugin(byte  ) = "ppx_type_conv.cma"
 plugin(native) = "ppx_type_conv.cmxs"
 exists_if = "ppx_type_conv.cma"
-
-# Until this is released: https://github.com/whitequark/ppx_deriving/pull/95
-package "for_ppx_deriving" (
-  description = "Don't use this directly"
-  error(ppx_driver) = "Cannot use ppx_type_conv.for_ppx_deriving when ppx_driver is set"
-  requires = "compiler-libs.common ppx_core.for_ppx_deriving ppx_deriving ppx_driver.for_ppx_deriving"
-  exists_if = "ppx_type_conv.cma"
-  ppxopt(-custom_ppx) = "ppx_deriving,./ppx_type_conv.cma"
-  ppxopt(-ppx_driver,-custom_ppx) += "ppx_deriving,./ppx_type_conv_deriving.cma"
-)
+ppxopt(-ppx_driver,-custom_ppx) = "ppx_deriving,package:ppx_type_conv.deriving"
 
 package "deriving" (
   version = "$(pkg_version)"
