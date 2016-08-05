@@ -1,0 +1,9 @@
+(library
+ ((name ppx_type_conv_deriving)
+  (public_name ppx_type_conv.deriving)
+  (public_release ((extra_deps (ppx_deriving.api))))
+  (wrapped false)
+  ;; This library doesn't build. It is only used in the public release
+  (skip_from_default true)
+  (libraries (ppx_type_conv))
+  (preprocess ((no_preprocessing All)))))
