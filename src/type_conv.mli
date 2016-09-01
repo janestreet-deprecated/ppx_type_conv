@@ -1,4 +1,4 @@
-(** Pa_type_conv: Preprocessing Module for Registering Type Conversions *)
+(** Ppx_type_conv: Preprocessing Module for Registering Type Conversions *)
 
 open Ppx_core.Std
 open Asttypes
