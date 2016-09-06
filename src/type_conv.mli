@@ -120,17 +120,24 @@ module Ppx_deriving_exporter : sig
 
   module type Ppx_deriving = sig
     type deriver
-
-    val create
-      : string
-      -> ?core_type    :(core_type -> expression)
-      -> ?type_ext_str :(structure, type_extension       ) ppx_deriving_generator
-      -> ?type_ext_sig :(signature, type_extension       ) ppx_deriving_generator
-      -> ?type_decl_str:(structure, type_declaration list) ppx_deriving_generator
-      -> ?type_decl_sig:(signature, type_declaration list) ppx_deriving_generator
-      -> unit
-      -> deriver
-
+    val create :
+      string ->
+      ?core_type: (core_type -> expression) ->
+      ?type_ext_str: (options:(string * expression) list -> path:string list ->
+                      type_extension -> structure) ->
+      ?type_ext_sig: (options:(string * expression) list -> path:string list ->
+                      type_extension -> signature) ->
+      ?type_decl_str: (options:(string * expression) list -> path:string list ->
+                        type_declaration list -> structure) ->
+      ?type_decl_sig: (options:(string * expression) list -> path:string list ->
+                        type_declaration list -> signature) ->
+      ?module_type_decl_str: (options:(string * expression) list ->
+                              path:string list ->
+                              module_type_declaration -> structure) ->
+      ?module_type_decl_sig: (options:(string * expression) list ->
+                              path:string list ->
+                              module_type_declaration -> signature) ->
+      unit -> deriver
     val register : deriver -> unit
   end
 
