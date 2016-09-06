@@ -1,3 +1,8 @@
+## 113.33.02+4.03
+
+Make the ppx\_deriving glue more resilient to small changes in
+ppx\_deriving. Related to whitequark/ppx_deriving#94
+
 ## 113.33.01+4.03
 
 Remove generation of empty value bindings.
