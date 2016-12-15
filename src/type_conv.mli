@@ -106,33 +106,3 @@ val add_alias
 
 (** Ignore a deriver. So that one can write: [Type_conv.add ... |> Type_conv.ignore] *)
 val ignore : t -> unit
-
-(**/**)
-
-(* For the ppx_deriving backend. Not for the casual user, this API will change very
-   soon. *)
-module Ppx_deriving_exporter : sig
-  type ('output_ast, 'input_ast) ppx_deriving_generator
-    =  options:(string * expression) list
-    -> path:string list
-    -> 'input_ast
-    -> 'output_ast
-
-  module type Ppx_deriving = sig
-    type deriver
-
-    val create
-      : string
-      -> ?core_type    :(core_type -> expression)
-      -> ?type_ext_str :(structure, type_extension       ) ppx_deriving_generator
-      -> ?type_ext_sig :(signature, type_extension       ) ppx_deriving_generator
-      -> ?type_decl_str:(structure, type_declaration list) ppx_deriving_generator
-      -> ?type_decl_sig:(signature, type_declaration list) ppx_deriving_generator
-      -> unit
-      -> deriver
-
-    val register : deriver -> unit
-  end
-
-  val set : (module Ppx_deriving) -> unit
-end

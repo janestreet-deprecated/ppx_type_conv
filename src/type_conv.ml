@@ -10,6 +10,24 @@ open Parsetree
 module Spellcheck = Ppx_core.Spellcheck
 module String_set = Set.Make (String)
 
+let keep_w32_impl = ref false
+let keep_w32_intf = ref false
+let () =
+  Ppx_driver.add_arg "-type-conv-keep-w32"
+    (Symbol
+       (["impl"; "intf"; "both"],
+        (function
+          | "impl" -> keep_w32_impl := true
+          | "intf" -> keep_w32_intf := true
+          | "both" ->
+            keep_w32_impl := true;
+            keep_w32_intf := true
+          | _ -> assert false)))
+    ~doc:" Do not try to disable warning 32 for the generated code"
+
+let keep_w32_impl () = !keep_w32_impl || Ppx_driver.pretty ()
+let keep_w32_intf () = !keep_w32_intf || Ppx_driver.pretty ()
+
 module List = struct
   include List
   let concat_map xs ~f = concat (map xs ~f)
@@ -95,37 +113,19 @@ end
    | Generators                                                      |
    +-----------------------------------------------------------------+ *)
 
-module Export_intf = struct
-  type ('output_ast, 'input_ast) ppx_deriving_generator
-    =  options:(string * expression) list
-    -> path:string list
-    -> 'input_ast
-    -> 'output_ast
-
-  module type Ppx_deriving = sig
-    type deriver
-    val create
-      : string
-      -> ?core_type    :(core_type -> expression)
-      -> ?type_ext_str :(structure, type_extension       ) ppx_deriving_generator
-      -> ?type_ext_sig :(signature, type_extension       ) ppx_deriving_generator
-      -> ?type_decl_str:(structure, type_declaration list) ppx_deriving_generator
-      -> ?type_decl_sig:(signature, type_declaration list) ppx_deriving_generator
-      -> unit
-      -> deriver
-    val register : deriver -> unit
-  end
-end
-
 module Generator = struct
-  type ('a, 'b, 'c) unpacked =
-    { spec           : ('c, 'a) Args.t
-    ; gen            : loc:Location.t -> path:string -> 'b -> 'c
-    ; arg_names      : String_set.t
-    ; attributes     : Attribute.packed list
-    }
-
-  type ('a, 'b) t = T : ('a, 'b, _) unpacked -> ('a, 'b) t
+  type ('a, 'b) t =
+    | T :
+        { spec           : ('c, 'a) Args.t
+        ; gen            : loc:Location.t -> path:string -> 'b -> 'c
+        ; arg_names      : String_set.t
+        ; attributes     : Attribute.packed list
+        } -> ('a, 'b) t
+    (* Generator imported from ppx deriving. Arguments are passed to the callback as
+       it. *)
+    | Imported_from_ppx_deriving of
+        { gen : loc:Location.t -> path:string -> args:(string * expression) list
+            -> 'b -> 'a }
 
   let make ?(attributes=[]) spec gen =
     let arg_names =
@@ -141,6 +141,14 @@ module Generator = struct
 
   let make_noarg ?attributes gen = make ?attributes Args.empty gen
 
+  let merge_accepted_args l =
+    let rec loop acc = function
+      | [] -> Some acc
+      | T t :: rest -> loop (String_set.union acc t.arg_names) rest
+      | Imported_from_ppx_deriving _ :: _ -> None
+    in
+    loop String_set.empty l
+
   let check_arguments name generators (args : (string * expression) list) =
     List.iter args ~f:(fun (label, e) ->
       if label = "" then
@@ -154,24 +162,25 @@ module Generator = struct
         String_set.add label set)
       : String_set.t
     );
-    let accepted_args =
-      List.fold_left generators ~init:String_set.empty ~f:(fun set (T t) ->
-        String_set.union set t.arg_names)
-    in
-    List.iter args ~f:(fun (label, e) ->
-      if not (String_set.mem label accepted_args) then
-        let spellcheck_msg =
-          match Spellcheck.spellcheck (String_set.elements accepted_args) label with
-          | None -> ""
-          | Some s -> ".\n" ^ s
-        in
-        Location.raise_errorf ~loc:e.pexp_loc
-          "ppx_type_conv: generator '%s' doesn't accept argument '%s'%s"
-          name label spellcheck_msg);
+    match merge_accepted_args generators with
+    | None -> ()
+    | Some accepted_args ->
+      List.iter args ~f:(fun (label, e) ->
+        if not (String_set.mem label accepted_args) then
+          let spellcheck_msg =
+            match Spellcheck.spellcheck (String_set.elements accepted_args) label with
+            | None -> ""
+            | Some s -> ".\n" ^ s
+          in
+          Location.raise_errorf ~loc:e.pexp_loc
+            "ppx_type_conv: generator '%s' doesn't accept argument '%s'%s"
+            name label spellcheck_msg);
   ;;
 
-  let apply (T t) ~name:_ ~loc ~path x args =
-    Args.apply t.spec args (t.gen ~loc ~path x)
+  let apply t ~name:_ ~loc ~path x args =
+    match t with
+    | T { spec; gen; _ } -> Args.apply spec args (gen ~loc ~path x)
+    | Imported_from_ppx_deriving { gen } -> gen ~loc ~path ~args x
   ;;
 
   let apply_all ?(rev=false) ~loc ~path entry (name, generators, args) =
@@ -316,7 +325,7 @@ module Deriver = struct
       (name, resolve field name, args))
   ;;
 
-  let export (module Ppx_deriving : Export_intf.Ppx_deriving) name =
+  let export name =
     let resolve_opt field =
       match resolve_internal field name with
       | generators                  -> Some generators
@@ -369,24 +378,27 @@ module Deriver = struct
          ())
   ;;
 
-  let ppx_deriving_implementation = ref None
+  let disable_import = ref false
 
-  let set_ppx_deriving_implementation impl =
-    ppx_deriving_implementation := Some impl;
-    Hashtbl.iter all ~f:(fun ~key ~data:_ -> export impl key)
-  ;;
-
-  let safe_add id t =
+  let safe_add ?(connect_with_ppx_deriving=Config.connect_with_ppx_deriving) id t =
     if Hashtbl.mem all id then
       failwith ("ppx_type_conv: generator '" ^ id ^ "' defined multiple times")
     else
       Hashtbl.add all ~key:id ~data:t;
-    match !ppx_deriving_implementation with
-    | None -> ()
-    | Some impl -> export impl id
+    if connect_with_ppx_deriving then begin
+      let save = !disable_import in
+      disable_import := true;
+      try
+        export id;
+        disable_import := save
+      with exn ->
+        disable_import := save;
+        raise exn
+    end
   ;;
 
   let add
+        ?connect_with_ppx_deriving
         ?str_type_decl
         ?str_type_ext
         ?str_exception
@@ -407,7 +419,7 @@ module Deriver = struct
       ; extension
       }
     in
-    safe_add name (Actual_deriver actual_deriver);
+    safe_add name (Actual_deriver actual_deriver) ?connect_with_ppx_deriving;
     (match extension with
      | None -> ()
      | Some f ->
@@ -415,6 +427,50 @@ module Deriver = struct
        Ppx_driver.register_transformation ("ppx_type_conv." ^ name)
          ~rules:[ Context_free.Rule.extension extension ]);
     name
+  ;;
+
+  let split_path path =
+    let rec loop i =
+      match String.index_from path i '.' with
+      | exception Not_found -> [String.sub path ~pos:i ~len:(String.length path - i)]
+      | j -> String.sub path ~pos:i ~len:(j - i) :: loop (j + 1)
+    in
+    loop 0
+  ;;
+
+  let import (d : Ppx_deriving.deriver) =
+    if !disable_import then () else begin
+      let make_generator f =
+        Generator.Imported_from_ppx_deriving
+          { gen = fun ~loc:_ ~path ~args x ->
+              f ~options:args ~path:(split_path path) x
+          }
+      in
+      let make_generator_lose_rec_flag f =
+        make_generator (fun ~options ~path (_rf, x) -> f ~options ~path x)
+      in
+      let extension =
+        match d.core_type with
+        | None -> None
+        | Some f -> Some (fun ~loc:_ ~path:_ ct -> f ct)
+      in
+      ignore (
+        add d.name ~connect_with_ppx_deriving:false
+          ~str_type_decl: (make_generator_lose_rec_flag d.type_decl_str)
+          ~str_type_ext:  (make_generator               d.type_ext_str )
+          ~sig_type_decl: (make_generator_lose_rec_flag d.type_decl_sig)
+          ~sig_type_ext:  (make_generator               d.type_ext_sig )
+          ?extension
+        : string
+      )
+    end
+  ;;
+
+  let () =
+    if Config.connect_with_ppx_deriving then begin
+      Ppx_deriving.add_register_hook import;
+      List.iter (Ppx_deriving.derivers ()) ~f:import
+    end
   ;;
 
   let add_alias
@@ -445,7 +501,7 @@ module Deriver = struct
   ;;
 end
 
-let add       = Deriver.add
+let add       = Deriver.add ?connect_with_ppx_deriving:None
 let add_alias = Deriver.add_alias
 
 (* +-----------------------------------------------------------------+
@@ -460,9 +516,9 @@ let generator_name_of_id loc id =
   | exception _ -> invalid_with ~loc:loc
 ;;
 
-let mk_deriving_attr context =
+let mk_deriving_attr context ~suffix =
   Attribute.declare
-    "type_conv.deriving"
+    ("type_conv.deriving" ^ suffix)
     context
     Ast_pattern.(
       let label =
@@ -490,9 +546,19 @@ let mk_deriving_attr context =
     (fun x -> x)
 ;;
 
-let deriving_attr_td = mk_deriving_attr Attribute.Context.type_declaration
-let deriving_attr_te = mk_deriving_attr Attribute.Context.type_extension
-let deriving_attr_ec = mk_deriving_attr Attribute.Context.extension_constructor
+module Attr = struct
+  let suffix = ""
+  let td = mk_deriving_attr ~suffix Type_declaration
+  let te = mk_deriving_attr ~suffix Type_extension
+  let ec = mk_deriving_attr ~suffix Extension_constructor
+
+  module Expect = struct
+    let suffix = "_inline"
+    let td = mk_deriving_attr ~suffix Type_declaration
+    let te = mk_deriving_attr ~suffix Type_extension
+    let ec = mk_deriving_attr ~suffix Extension_constructor
+  end
+end
 
 (* +-----------------------------------------------------------------+
    | Unused warning stuff                                            |
@@ -509,7 +575,9 @@ let disable_unused_warning_attribute ~loc =
 ;;
 
 let disable_unused_warning_str ~loc st =
-  if not do_insert_unused_warning_attribute then
+  if keep_w32_impl () then
+    st
+  else if not do_insert_unused_warning_attribute then
     Ignore_unused_warning.add_dummy_user_for_values#structure st
   else
     [pstr_include ~loc
@@ -520,11 +588,14 @@ let disable_unused_warning_str ~loc st =
 ;;
 
 let disable_unused_warning_sig ~loc sg =
-  [psig_include ~loc
-     (include_infos ~loc
-        (pmty_signature ~loc
-           (psig_attribute ~loc (disable_unused_warning_attribute ~loc)
-            :: sg)))]
+  if keep_w32_intf () then
+    sg
+  else
+    [psig_include ~loc
+       (include_infos ~loc
+          (pmty_signature ~loc
+             (psig_attribute ~loc (disable_unused_warning_attribute ~loc)
+              :: sg)))]
 ;;
 
 (* +-----------------------------------------------------------------+
@@ -555,12 +626,15 @@ let remove generators =
    +-----------------------------------------------------------------+ *)
 
 let types_used_by_type_conv (tds : type_declaration list)
-    : structure_item list =
-  List.map tds ~f:(fun td ->
-    let typ = core_type_of_type_declaration td in
-    let loc = td.ptype_loc in
-    [%stri let _ = fun (_ : [%t typ]) -> () ]
-  )
+  : structure_item list =
+  if keep_w32_impl () then
+    []
+  else
+    List.map tds ~f:(fun td ->
+      let typ = core_type_of_type_declaration td in
+      let loc = td.ptype_loc in
+      [%stri let _ = fun (_ : [%t typ]) -> () ]
+    )
 
 let merge_generators field l =
   List.filter_map l ~f:(fun x -> x)
@@ -603,28 +677,42 @@ let expand_sig_type_ext ~loc ~path te generators =
 let () =
   Ppx_driver.register_transformation "type_conv"
     ~rules:[ Context_free.Rule.attr_str_type_decl
-               deriving_attr_td
+               Attr.td
                expand_str_type_decls
            ; Context_free.Rule.attr_sig_type_decl
-               deriving_attr_td
+               Attr.td
                expand_sig_type_decls
            ; Context_free.Rule.attr_str_type_ext
-               deriving_attr_te
+               Attr.te
                expand_str_type_ext
            ; Context_free.Rule.attr_sig_type_ext
-               deriving_attr_te
+               Attr.te
                expand_sig_type_ext
            ; Context_free.Rule.attr_str_exception
-               deriving_attr_ec
+               Attr.ec
                expand_str_exception
            ; Context_free.Rule.attr_sig_exception
-               deriving_attr_ec
+               Attr.ec
+               expand_sig_exception
+
+           (* [@@deriving_inline] *)
+           ; Context_free.Rule.attr_str_type_decl_expect
+               Attr.Expect.td
+               expand_str_type_decls
+           ; Context_free.Rule.attr_sig_type_decl_expect
+               Attr.Expect.td
+               expand_sig_type_decls
+           ; Context_free.Rule.attr_str_type_ext_expect
+               Attr.Expect.te
+               expand_str_type_ext
+           ; Context_free.Rule.attr_sig_type_ext_expect
+               Attr.Expect.te
+               expand_sig_type_ext
+           ; Context_free.Rule.attr_str_exception_expect
+               Attr.Expect.ec
+               expand_str_exception
+           ; Context_free.Rule.attr_sig_exception_expect
+               Attr.Expect.ec
                expand_sig_exception
            ]
 ;;
-
-
-module Ppx_deriving_exporter = struct
-  include Export_intf
-  let set = Deriver.set_ppx_deriving_implementation
-end
