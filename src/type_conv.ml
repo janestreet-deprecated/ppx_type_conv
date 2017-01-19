@@ -378,6 +378,8 @@ module Deriver = struct
          ())
   ;;
 
+  (* When connecting with ppx_deriving, both ppx_type_conv and ppx_deriving forwards new
+     derivers to each other. This reference is used to break the loop. *)
   let disable_import = ref false
 
   let safe_add ?(connect_with_ppx_deriving=Config.connect_with_ppx_deriving) id t =
