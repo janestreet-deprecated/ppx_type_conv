@@ -1,10 +1,5 @@
-open StdLabels
-open Ppx_core.Std
+open Ppx_core
 open Ast_builder.Default
-open Asttypes
-open Parsetree
-
-[@@@metaloc loc]
 
 let underscore_binding exp =
   let loc = exp.pexp_loc in

@@ -1,8 +1,6 @@
 (** Ppx_type_conv: Preprocessing Module for Registering Type Conversions *)
 
-open Ppx_core.Std
-open Asttypes
-open Parsetree
+open Ppx_core
 
 (** Specification of generator arguments *)
 module Args : sig

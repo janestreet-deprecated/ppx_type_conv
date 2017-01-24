@@ -1,7 +1,11 @@
 (library
  ((name ppx_type_conv)
   (public_name ppx_type_conv)
-  (libraries (compiler-libs.common ppx_core ppx_driver ppx_deriving.api))
-  (preprocess metaquot)
+  (libraries (compiler-libs.common
+              ppx_core
+              ppx_driver
+              ppx_deriving.api
+              ocaml-migrate-parsetree))
+  (preprocess (pps (ppx_metaquot)))
   (js_of_ocaml ())
   ))
