@@ -14,7 +14,9 @@ depends: [
   "ppx_driver"
   "ppx_metaquot"
   "migrate-parsetree"
-  "ppx_deriving"      {>= "4.0"}
+]
+depopts: [
+  "ppx_deriving"
 ]
 available: [ ocaml-version >= "4.03.0" ]
 descr: "

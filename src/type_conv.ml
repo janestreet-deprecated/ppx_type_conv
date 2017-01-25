@@ -3,7 +3,8 @@
 open Ppx_core
 open Ast_builder.Default
 
-module Spellcheck = Ppx_core.Spellcheck
+module Spellcheck   = Ppx_core.Spellcheck
+module Ppx_deriving = Ppx_deriving_backend
 
 let keep_w32_impl = ref false
 let keep_w32_intf = ref false

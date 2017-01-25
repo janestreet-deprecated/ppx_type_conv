@@ -4,8 +4,11 @@
   (libraries (compiler-libs.common
               ppx_core
               ppx_driver
-              ppx_deriving.api
+              (select ppx_deriving_backend.ml from
+               (ppx_deriving.api  "include Ppx_deriving")
+               (fake_ppx_deriving "include Fake_ppx_deriving"))
               ocaml-migrate-parsetree))
   (preprocess (pps (ppx_metaquot)))
   (js_of_ocaml ())
   ))
+
