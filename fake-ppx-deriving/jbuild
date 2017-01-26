@@ -1,8 +1,0 @@
-(library
- ((name fake_ppx_deriving)
-  (public_name ppx_type_conv.fake_ppx_deriving)
-  (synopsis "Fake ppx_deriving backend for ppx_type_conv")
-  (libraries (compiler-libs.common))
-  (preprocess no_preprocessing)
-  (js_of_ocaml ())
-  ))
