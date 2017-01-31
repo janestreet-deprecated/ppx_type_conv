@@ -16,7 +16,10 @@ depends: [
   "migrate-parsetree"
 ]
 depopts: [
-  "ppx_deriving" {>= "4.0"}
+  "ppx_deriving"
+]
+conflicts: [
+  "ppx_deriving" < "4.0"
 ]
 available: [ ocaml-version >= "4.03.0" ]
 descr: "
