@@ -324,7 +324,6 @@ module Deriver = struct
     let sig_type_ext  = resolve_opt Field.sig_type_ext  in
     (* Ppx deriving works on the compiler AST while type conv work on the version
        selected by Ppx_ast, so we need to convert. *)
-    let module Ocaml = Migrate_parsetree.Ast_current in
     let module Js = Ppx_ast.Selected_ast in
     let core_type =
       match Hashtbl.find_exn all name with
@@ -332,61 +331,42 @@ module Deriver = struct
       | Actual_deriver drv ->
         Option.map drv.extension ~f:(fun f ->
           fun ty ->
-            Ocaml.ast_of_core_type ty
-            |> Js.of_ocaml_ast
-            |> Js.core_type_of_ast
+            Js.of_ocaml Core_type ty
             |> f ~loc:ty.ptyp_loc ~path:""
-            |> Js.ast_of_expression
-            |> Js.to_ocaml_ast
-            |> Ocaml.expression_of_ast
+            |> Js.to_ocaml Expression
         )
     in
     let convert_args args =
       List.map args ~f:(fun (name, expr) ->
-        (name,
-         Ocaml.ast_of_expression expr
-         |> Js.of_ocaml_ast
-         |> Js.expression_of_ast))
+        (name, Js.of_ocaml Expression expr))
     in
     let import_path l = String.concat l ~sep:"." in
-    let make_type_decl gens wrap unwrap =
+    let make_type_decl gens result_kind =
       Option.map gens ~f:(fun gens ->
         fun ~options ~path tds ->
           let path = import_path path in
           let options = convert_args options in
           Generator.check_arguments name gens options;
-          let tds =
-            Ocaml.ast_of_type_decls tds
-            |> Js.of_ocaml_ast
-            |> Js.type_decls_of_ast
-          in
+          let tds = Js.of_ocaml (List Type_declaration) tds in
           List.concat_map gens ~f:(fun gen ->
             Generator.apply gen ~name ~loc:Location.none ~path (Recursive, tds) options)
-          |> wrap
-          |> Js.to_ocaml_ast
-          |> unwrap)
+          |> Js.to_ocaml result_kind)
     in
-    let make_type_ext gens wrap unwrap =
+    let make_type_ext gens result_kind =
       Option.map gens ~f:(fun gens ->
         fun ~options ~path te ->
           let path = import_path path in
           let options = convert_args options in
           Generator.check_arguments name gens options;
-          let te =
-            Ocaml.ast_of_type_extension te
-            |> Js.of_ocaml_ast
-            |> Js.type_extension_of_ast
-          in
+          let te = Js.of_ocaml Type_extension te in
           List.concat_map gens ~f:(fun gen ->
             Generator.apply gen ~name ~loc:Location.none ~path te options)
-          |> wrap
-          |> Js.to_ocaml_ast
-          |> unwrap)
+          |> Js.to_ocaml result_kind)
     in
-    let type_decl_str = make_type_decl str_type_decl Js.ast_of_impl Ocaml.impl_of_ast in
-    let type_decl_sig = make_type_decl sig_type_decl Js.ast_of_intf Ocaml.intf_of_ast in
-    let type_ext_str  = make_type_ext  str_type_ext  Js.ast_of_impl Ocaml.impl_of_ast in
-    let type_ext_sig  = make_type_ext  sig_type_ext  Js.ast_of_intf Ocaml.intf_of_ast in
+    let type_decl_str = make_type_decl str_type_decl Structure in
+    let type_decl_sig = make_type_decl sig_type_decl Signature in
+    let type_ext_str  = make_type_ext  str_type_ext  Structure in
+    let type_ext_sig  = make_type_ext  sig_type_ext  Signature in
     Ppx_deriving.register
       (Ppx_deriving.create name
          ?core_type
@@ -401,7 +381,7 @@ module Deriver = struct
      derivers to each other. This reference is used to break the loop. *)
   let disable_import = ref false
 
-  let safe_add ?(connect_with_ppx_deriving=Type_conv_config.connect_with_ppx_deriving) id t =
+  let safe_add ?(connect_with_ppx_deriving=Ppx_deriving.real) id t =
     (match Hashtbl.add all ~key:id ~data:t with
      | `Ok -> ()
      | `Duplicate ->
@@ -452,70 +432,86 @@ module Deriver = struct
 
   let split_path path = String.split path ~on:'.'
 
-  let import (d : Ppx_deriving.deriver) =
-    if !disable_import then () else begin
-      (* Ppx deriving works on the compiler AST while type conv work on the version
-         selected by Ppx_ast, so we need to convert. *)
-      let module Ocaml = Migrate_parsetree.Ast_current in
-      let module Js = Ppx_ast.Selected_ast in
-      let convert_args args =
-        List.map args ~f:(fun (name, expr) ->
-          (name,
-           Js.ast_of_expression expr
-           |> Js.to_ocaml_ast
-           |> Ocaml.expression_of_ast))
-      in
-      let map_type_ext f wrap unwrap =
-        Generator.Imported_from_ppx_deriving
-          { gen = fun ~loc:_ ~path ~args x ->
-              Js.ast_of_type_extension x
-              |> Js.to_ocaml_ast
-              |> Ocaml.type_extension_of_ast
-              |> f ~options:(convert_args args) ~path:(split_path path)
-              |> wrap
-              |> Js.of_ocaml_ast
-              |> unwrap
-          }
-      in
-      let map_type_decl f wrap unwrap =
-        Generator.Imported_from_ppx_deriving
-          { gen = fun ~loc:_ ~path ~args (_rf, x) ->
-              Js.ast_of_type_decls x
-              |> Js.to_ocaml_ast
-              |> Ocaml.type_decls_of_ast
-              |> f ~options:(convert_args args) ~path:(split_path path)
-              |> wrap
-              |> Js.of_ocaml_ast
-              |> unwrap
-          }
-      in
-      let extension =
-        match d.core_type with
-        | None -> None
-        | Some f ->
-          Some (fun ~loc:_ ~path:_ ct ->
-            Js.ast_of_core_type ct
-            |> Js.to_ocaml_ast
-            |> Ocaml.core_type_of_ast
-            |> f
-            |> Ocaml.ast_of_expression
-            |> Js.of_ocaml_ast
-            |> Js.expression_of_ast)
-      in
-      ignore (
-        add d.name ~connect_with_ppx_deriving:false
-          ~str_type_decl: (map_type_decl d.type_decl_str Ocaml.ast_of_impl Js.impl_of_ast)
-          ~str_type_ext:  (map_type_ext  d.type_ext_str  Ocaml.ast_of_impl Js.impl_of_ast)
-          ~sig_type_decl: (map_type_decl d.type_decl_sig Ocaml.ast_of_intf Js.intf_of_ast)
-          ~sig_type_ext:  (map_type_ext  d.type_ext_sig  Ocaml.ast_of_intf Js.intf_of_ast)
-          ?extension
-        : string
-      )
+  module Ppx_deriving_import = struct
+    include struct
+      open Migrate_parsetree.OCaml_current.Ast
+      open Parsetree
+
+      type ('output_ast, 'input_ast) generator
+        =  options:(string * expression) list
+        -> path:string list
+        -> 'input_ast
+        -> 'output_ast
+
+      type deriver =
+        { name          : string
+        ; core_type     : (core_type -> expression) option
+        ; type_decl_str : (structure, type_declaration list) generator
+        ; type_ext_str  : (structure, type_extension       ) generator
+        ; type_decl_sig : (signature, type_declaration list) generator
+        ; type_ext_sig  : (signature, type_extension       ) generator
+        }
     end
-  ;;
+
+    let import d =
+      if !disable_import then () else begin
+        (* Ppx deriving works on the compiler AST while type conv work on the version
+           selected by Ppx_ast, so we need to convert. *)
+        let module Js = Ppx_ast.Selected_ast in
+        let convert_args args =
+          List.map args ~f:(fun (name, expr) ->
+            (name, Js.to_ocaml Expression expr))
+        in
+        let map_type_ext f result_kind =
+          Generator.Imported_from_ppx_deriving
+            { gen = fun ~loc:_ ~path ~args x ->
+                Js.to_ocaml Type_extension x
+                |> f ~options:(convert_args args) ~path:(split_path path)
+                |> Js.of_ocaml result_kind
+            }
+        in
+        let map_type_decl f result_kind =
+          Generator.Imported_from_ppx_deriving
+            { gen = fun ~loc:_ ~path ~args (_rf, x) ->
+                Js.to_ocaml (List Type_declaration) x
+                |> f ~options:(convert_args args) ~path:(split_path path)
+                |> Js.of_ocaml result_kind
+            }
+        in
+        let extension =
+          match d.core_type with
+          | None -> None
+          | Some f ->
+            Some (fun ~loc:_ ~path:_ ct ->
+              Js.to_ocaml Core_type ct
+              |> f
+              |> Js.of_ocaml Expression)
+        in
+        ignore (
+          add d.name ~connect_with_ppx_deriving:false
+            ~str_type_decl: (map_type_decl d.type_decl_str Structure)
+            ~str_type_ext:  (map_type_ext  d.type_ext_str  Structure)
+            ~sig_type_decl: (map_type_decl d.type_decl_sig Signature)
+            ~sig_type_ext:  (map_type_ext  d.type_ext_sig  Signature)
+            ?extension
+          : string
+        )
+      end
+    ;;
+  end
+
+  let import (d : Ppx_deriving.deriver) =
+    Ppx_deriving_import.import
+      { name          = d.name
+      ; core_type     = d.core_type
+      ; type_decl_str = d.type_decl_str
+      ; type_ext_str  = d.type_ext_str
+      ; type_decl_sig = d.type_decl_sig
+      ; type_ext_sig  = d.type_ext_sig
+      }
 
   let () =
-    if Type_conv_config.connect_with_ppx_deriving then begin
+    if Ppx_deriving.real then begin
       Ppx_deriving.add_register_hook import;
       List.iter (Ppx_deriving.derivers ()) ~f:import
     end
@@ -551,6 +547,8 @@ end
 
 let add       = Deriver.add ?connect_with_ppx_deriving:None
 let add_alias = Deriver.add_alias
+
+module Ppx_deriving_import = Deriver.Ppx_deriving_import
 
 (* +-----------------------------------------------------------------+
    | [@@deriving ] parsing                                           |

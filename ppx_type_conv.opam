@@ -13,7 +13,7 @@ depends: [
   "ppx_core"
   "ppx_driver"
   "ppx_metaquot"
-  "migrate-parsetree"
+  "ocaml-migrate-parsetree"
 ]
 depopts: [
   "ppx_deriving"

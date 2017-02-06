@@ -41,3 +41,6 @@ let create
 let register = ignore
 let add_register_hook = ignore
 let derivers () = []
+
+let real = false
+
