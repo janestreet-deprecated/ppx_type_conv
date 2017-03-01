@@ -86,7 +86,7 @@ module Args = struct
         | Nil -> I_nil
         | Cons (t, p) ->
           let value =
-            match List.Assoc.find args p.name with
+            match List.Assoc.find args ~equal:String.equal p.name with
             | None -> p.default
             | Some expr -> Ast_pattern.Packed.parse p.pattern expr.pexp_loc expr
           in
