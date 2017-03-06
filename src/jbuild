@@ -8,7 +8,7 @@
                (ppx_deriving.api -> real_ppx_deriving.ml.in)
                (                 -> fake_ppx_deriving.ml.in))
               ocaml-migrate-parsetree))
-  (preprocess (pps (ppx_metaquot)))
+  (preprocess (pps (ppx_metaquot ppx_driver.runner)))
   ))
 
 
