@@ -109,7 +109,7 @@ val ignore : t -> unit
 (* This is used inside Jane Street to make ppx_deriving depend on ppx_type_conv. It's not
    meant to be used by casual users. *)
 module Ppx_deriving_import : sig
-  open Migrate_parsetree.OCaml_current.Ast
+  open Ppx_deriving_backend.OCaml_version.Ast
   open Parsetree
 
   type ('output_ast, 'input_ast) generator

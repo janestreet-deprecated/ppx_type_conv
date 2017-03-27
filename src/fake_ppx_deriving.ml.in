@@ -44,3 +44,4 @@ let derivers () = []
 
 let real = false
 
+module Selected_ast = Ppx_ast.Selected_ast

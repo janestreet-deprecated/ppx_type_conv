@@ -312,7 +312,7 @@ module Deriver = struct
     let sig_type_ext  = resolve_opt Field.sig_type_ext  in
     (* Ppx deriving works on the compiler AST while type conv work on the version
        selected by Ppx_ast, so we need to convert. *)
-    let module Js = Ppx_ast.Selected_ast in
+    let module Js = Ppx_deriving.Selected_ast in
     let core_type =
       match Hashtbl.find_exn all name with
       | Alias _ -> None
@@ -422,7 +422,7 @@ module Deriver = struct
 
   module Ppx_deriving_import = struct
     include struct
-      open Migrate_parsetree.OCaml_current.Ast
+      open Ppx_deriving_backend.OCaml_version.Ast
       open Parsetree
 
       type ('output_ast, 'input_ast) generator
@@ -445,7 +445,7 @@ module Deriver = struct
       if !disable_import then () else begin
         (* Ppx deriving works on the compiler AST while type conv work on the version
            selected by Ppx_ast, so we need to convert. *)
-        let module Js = Ppx_ast.Selected_ast in
+        let module Js = Ppx_deriving.Selected_ast in
         let convert_args args =
           List.map args ~f:(fun (name, expr) ->
             (name, Js.to_ocaml Expression expr))
