@@ -170,25 +170,13 @@ module Generator = struct
     | Imported_from_ppx_deriving { gen } -> gen ~loc ~path ~args x
   ;;
 
-  let apply_all ?(rev=false) ~loc ~path entry (name, generators, args) =
+  let apply_all ~loc ~path entry (name, generators, args) =
     check_arguments name.txt generators args;
-    let results =
-      if rev
-      then
-        (* Map actual_generators right->left so side effects (gensym) match camlp4 *)
-        List.rev generators
-        |> List.map ~f:(fun t -> apply t ~name:name.txt ~loc ~path entry args)
-        |> List.rev
-      else
-        generators
-        |> List.map ~f:(fun t -> apply t ~name:name.txt ~loc ~path entry args)
-    in
-    List.concat results
+    List.concat_map generators ~f:(fun t -> apply t ~name:name.txt ~loc ~path entry args)
   ;;
 
-  let apply_all ?rev ~loc ~path entry generators =
-    let generators = List.rev generators in
-    List.concat_map generators ~f:(apply_all ?rev ~loc ~path entry)
+  let apply_all ~loc ~path entry generators =
+    List.concat_map generators ~f:(apply_all ~loc ~path entry)
   ;;
 end
 
@@ -691,7 +679,7 @@ let expand_str_type_decls ~loc ~path rec_flag tds values =
   let generators = merge_generators Deriver.Field.str_type_decl values in
   let generated =
     types_used_by_type_conv tds
-    @ Generator.apply_all ~rev:true ~loc ~path (rec_flag, tds) generators;
+    @ Generator.apply_all ~loc ~path (rec_flag, tds) generators;
   in
   disable_unused_warning_str ~loc generated
 
@@ -702,22 +690,22 @@ let expand_sig_type_decls ~loc ~path rec_flag tds values =
 
 let expand_str_exception ~loc ~path ec generators =
   let generators = Deriver.resolve_all Deriver.Field.str_exception generators in
-  let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
+  let generated = Generator.apply_all ~loc ~path ec generators in
   disable_unused_warning_str ~loc generated
 
 let expand_sig_exception ~loc ~path ec generators =
   let generators = Deriver.resolve_all Deriver.Field.sig_exception generators in
-  let generated = Generator.apply_all ~rev:true ~loc ~path ec generators in
+  let generated = Generator.apply_all ~loc ~path ec generators in
   disable_unused_warning_sig ~loc generated
 
 let expand_str_type_ext ~loc ~path te generators =
   let generators = Deriver.resolve_all Deriver.Field.str_type_ext generators in
-  let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
+  let generated = Generator.apply_all ~loc ~path te generators in
   disable_unused_warning_str ~loc generated
 
 let expand_sig_type_ext ~loc ~path te generators =
   let generators = Deriver.resolve_all Deriver.Field.sig_type_ext generators in
-  let generated = Generator.apply_all ~rev:true ~loc ~path te generators in
+  let generated = Generator.apply_all ~loc ~path te generators in
   disable_unused_warning_sig ~loc generated
 
 let () =
