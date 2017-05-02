@@ -40,16 +40,19 @@ end
 type t (** Type of registered type-conv derivers *)
 
 module Generator : sig
+  type deriver = t
   type ('output_ast, 'input_ast) t
 
   val make
     :  ?attributes:Attribute.packed list
+    -> ?deps:deriver list
     -> ('f, 'output_ast) Args.t
     -> (loc:Location.t -> path:string -> 'input_ast -> 'f)
     -> ('output_ast, 'input_ast) t
 
   val make_noarg
     :  ?attributes:Attribute.packed list
+    -> ?deps:deriver list
     -> (loc:Location.t -> path:string -> 'input_ast -> 'output_ast)
     -> ('output_ast, 'input_ast) t
 
@@ -61,7 +64,7 @@ module Generator : sig
     -> 'input_ast
     -> (string * expression) list
     -> 'output_ast
-end
+end with type deriver := t
 
 
 (** Register a new type-conv generator.

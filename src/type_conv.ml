@@ -107,13 +107,18 @@ end
    | Generators                                                      |
    +-----------------------------------------------------------------+ *)
 
+type t = string
+let ignore (_ : t) = ()
+
 module Generator = struct
+  type deriver = t
   type ('a, 'b) t =
     | T :
         { spec           : ('c, 'a) Args.t
         ; gen            : loc:Location.t -> path:string -> 'b -> 'c
         ; arg_names      : Set.M(String).t
         ; attributes     : Attribute.packed list
+        ; deps           : deriver list
         } -> ('a, 'b) t
     (* Generator imported from ppx deriving. Arguments are passed to the callback as
        it. *)
@@ -121,16 +126,21 @@ module Generator = struct
         { gen : loc:Location.t -> path:string -> args:(string * expression) list
             -> 'b -> 'a }
 
-  let make ?(attributes=[]) spec gen =
+  let deps : type a b. (a, b) t -> deriver list = function
+    | T { deps; _ } -> deps
+    | Imported_from_ppx_deriving _ -> []
+
+  let make ?(attributes=[]) ?(deps=[]) spec gen =
     let arg_names = Set.of_list (module String) (Args.names spec) in
     T { spec
       ; gen
       ; arg_names
       ; attributes
+      ; deps
       }
   ;;
 
-  let make_noarg ?attributes gen = make ?attributes Args.empty gen
+  let make_noarg ?attributes ?deps gen = make ?attributes ?deps Args.empty gen
 
   let merge_accepted_args l =
     let rec loop acc = function
@@ -179,9 +189,6 @@ module Generator = struct
     List.concat_map generators ~f:(apply_all ~loc ~path entry)
   ;;
 end
-
-type t = string
-let ignore (_ : t) = ()
 
 module Deriver = struct
   module Actual_deriver = struct
@@ -246,9 +253,10 @@ module Deriver = struct
 
   exception Not_supported of string
 
-  let resolve_internal (field : (_, _) Field.t) name =
+  let resolve_actual_derivers (field : (_, _) Field.t) name =
     let rec loop name collected =
-      if List.exists collected ~f:(fun (d : Actual_deriver.t) -> String.equal d.name name) then
+      if List.exists collected
+           ~f:(fun (d : Actual_deriver.t) -> String.equal d.name name) then
         collected
       else
         match Hashtbl.find all name with
@@ -258,11 +266,13 @@ module Deriver = struct
           List.fold_right set ~init:collected ~f:loop
         | None -> raise (Not_supported name)
     in
-    let actual_derivers_rev = loop name [] in
-    List.rev_map actual_derivers_rev ~f:(fun drv ->
+    List.rev (loop name [])
+
+  let resolve_internal (field : (_, _) Field.t) name =
+    List.map (resolve_actual_derivers field name) ~f:(fun drv ->
       match field.get drv with
       | None -> raise (Not_supported name)
-      | Some g -> g)
+      | Some g -> (drv.name, g))
   ;;
 
   let supported_for field =
@@ -296,14 +306,26 @@ module Deriver = struct
   ;;
 
   let resolve_all field derivers =
+    (* Set of actual deriver names *)
+    let seen = Hash_set.create (module String) () in
     List.map derivers ~f:(fun (name, args) ->
-      (name, resolve field name, args))
+      let named_generators = resolve field name in
+      List.iter named_generators ~f:(fun (actual_deriver_name, gen) ->
+        List.iter (Generator.deps gen) ~f:(fun dep ->
+          List.iter (resolve_actual_derivers field dep) ~f:(fun drv ->
+            let dep_name = drv.name in
+            if not (Hash_set.mem seen dep_name) then
+              Location.raise_errorf ~loc:name.loc
+                "Deriver %s is needed for %s, you need to add it before in the list"
+                dep_name name.txt));
+        Hash_set.add seen actual_deriver_name);
+      (name, List.map named_generators ~f:snd, args))
   ;;
 
   let export name =
     let resolve_opt field =
       match resolve_internal field name with
-      | generators                  -> Some generators
+      | generators                  -> Some (List.map generators ~f:snd)
       | exception (Not_supported _) -> None
     in
     let str_type_decl = resolve_opt Field.str_type_decl in
