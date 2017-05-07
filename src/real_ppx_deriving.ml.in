@@ -1,2 +1,4 @@
 include Ppx_deriving
 let real = true
+
+module Selected_ast = Ppx_ast.Select_ast(Ppx_deriving.OCaml_version)
