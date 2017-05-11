@@ -1,7 +1,5 @@
----
-title: ppx_type_conv - Support Library for type-driven code generators
-parent: ../README.md
----
+ppx_type_conv - Support Library for type-driven code generators
+===============================================================
 
 What is `type_conv`?
 --------------------
