@@ -21,7 +21,7 @@ depopts: [
 conflicts: [
   "ppx_deriving" {< "4.0"}
 ]
-available: [ ocaml-version >= "4.03.0" ]
+available: [ ocaml-version >= "4.04.1" ]
 descr: "
 Support Library for type-driven code generators
 
