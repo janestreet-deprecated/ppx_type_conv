@@ -4,7 +4,6 @@ open Ppx_core
 open Ast_builder.Default
 
 module Spellcheck   = Ppx_core.Spellcheck
-module Ppx_deriving = Ppx_deriving_backend
 
 let keep_w32_impl = ref false
 let keep_w32_intf = ref false
@@ -113,22 +112,14 @@ let ignore (_ : t) = ()
 module Generator = struct
   type deriver = t
   type ('a, 'b) t =
-    | T :
-        { spec           : ('c, 'a) Args.t
-        ; gen            : loc:Location.t -> path:string -> 'b -> 'c
-        ; arg_names      : Set.M(String).t
-        ; attributes     : Attribute.packed list
-        ; deps           : deriver list
-        } -> ('a, 'b) t
-    (* Generator imported from ppx deriving. Arguments are passed to the callback as
-       it. *)
-    | Imported_from_ppx_deriving of
-        { gen : loc:Location.t -> path:string -> args:(string * expression) list
-            -> 'b -> 'a }
+    | T : { spec           : ('c, 'a) Args.t
+          ; gen            : loc:Location.t -> path:string -> 'b -> 'c
+          ; arg_names      : Set.M(String).t
+          ; attributes     : Attribute.packed list
+          ; deps           : deriver list
+          } -> ('a, 'b) t
 
-  let deps : type a b. (a, b) t -> deriver list = function
-    | T { deps; _ } -> deps
-    | Imported_from_ppx_deriving _ -> []
+  let deps (T t) = t.deps
 
   let make ?(attributes=[]) ?(deps=[]) spec gen =
     let arg_names = Set.of_list (module String) (Args.names spec) in
@@ -144,9 +135,8 @@ module Generator = struct
 
   let merge_accepted_args l =
     let rec loop acc = function
-      | [] -> Some acc
+      | [] -> acc
       | T t :: rest -> loop (Set.union acc t.arg_names) rest
-      | Imported_from_ppx_deriving _ :: _ -> None
     in
     loop (Set.empty (module String)) l
 
@@ -159,25 +149,21 @@ module Generator = struct
       ~f:(fun (label, e) ->
         Location.raise_errorf ~loc:e.pexp_loc
           "ppx_type_conv: argument labelled '%s' appears more than once" label);
-    match merge_accepted_args generators with
-    | None -> ()
-    | Some accepted_args ->
-      List.iter args ~f:(fun (label, e) ->
-        if not (Set.mem accepted_args label) then
-          let spellcheck_msg =
-            match Spellcheck.spellcheck (Set.to_list accepted_args) label with
-            | None -> ""
-            | Some s -> ".\n" ^ s
-          in
-          Location.raise_errorf ~loc:e.pexp_loc
-            "ppx_type_conv: generator '%s' doesn't accept argument '%s'%s"
-            name label spellcheck_msg);
+    let accepted_args = merge_accepted_args generators in
+    List.iter args ~f:(fun (label, e) ->
+      if not (Set.mem accepted_args label) then
+        let spellcheck_msg =
+          match Spellcheck.spellcheck (Set.to_list accepted_args) label with
+          | None -> ""
+          | Some s -> ".\n" ^ s
+        in
+        Location.raise_errorf ~loc:e.pexp_loc
+          "ppx_type_conv: generator '%s' doesn't accept argument '%s'%s"
+          name label spellcheck_msg);
   ;;
 
-  let apply t ~name:_ ~loc ~path x args =
-    match t with
-    | T { spec; gen; _ } -> Args.apply spec args (gen ~loc ~path x)
-    | Imported_from_ppx_deriving { gen } -> gen ~loc ~path ~args x
+  let apply (T t) ~name:_ ~loc ~path x args =
+    Args.apply t.spec args (t.gen ~loc ~path x)
   ;;
 
   let apply_all ~loc ~path entry (name, generators, args) =
@@ -249,7 +235,12 @@ module Deriver = struct
     | Actual_deriver of Actual_deriver.t
     | Alias of Alias.t
 
-  let all : (string, t) Hashtbl.t = Hashtbl.create (module String) () ~size:42
+  type Ppx_derivers.deriver += T of t
+
+  let derivers () =
+    List.filter_map (Ppx_derivers.derivers ()) ~f:(function
+      | name, T t -> Some (name, t)
+      | _ -> None)
 
   exception Not_supported of string
 
@@ -259,12 +250,12 @@ module Deriver = struct
            ~f:(fun (d : Actual_deriver.t) -> String.equal d.name name) then
         collected
       else
-        match Hashtbl.find all name with
-        | Some (Actual_deriver drv) -> drv :: collected
-        | Some (Alias alias) ->
+        match Ppx_derivers.lookup name with
+        | Some (T (Actual_deriver drv)) -> drv :: collected
+        | Some (T (Alias alias)) ->
           let set = field.get_set alias in
           List.fold_right set ~init:collected ~f:loop
-        | None -> raise (Not_supported name)
+        | _ -> raise (Not_supported name)
     in
     List.rev (loop name [])
 
@@ -276,10 +267,10 @@ module Deriver = struct
   ;;
 
   let supported_for field =
-    Hashtbl.fold all ~init:(Set.empty (module String))
-      ~f:(fun ~key ~data:_ acc ->
-        match resolve_internal field key with
-        | _ -> Set.add acc key
+    List.fold_left (derivers ()) ~init:(Set.empty (module String))
+      ~f:(fun acc (name, _) ->
+        match resolve_internal field name with
+        | _ -> Set.add acc name
         | exception Not_supported _ -> acc)
     |> Set.to_list
   ;;
@@ -306,9 +297,29 @@ module Deriver = struct
   ;;
 
   let resolve_all field derivers =
+    let derivers_and_args =
+      List.filter_map derivers ~f:(fun (name, args) ->
+        match Ppx_derivers.lookup name.txt with
+        | None ->
+          not_supported field name
+        | Some (T _) ->
+          (* It's one of ours, parse the arguments now. We can't do it before since
+             ppx_deriving uses a different syntax for arguments. *)
+          Some
+            (name,
+             List.map args ~f:(fun (label, expr) ->
+               match label with
+               | Labelled s -> (s, expr)
+               | _ ->
+                 Location.raise_errorf ~loc:expr.pexp_loc
+                   "ppx_type_conv: non-optional labeled argument expected"))
+        | Some _ ->
+          (* It's not one of ours, ignore it. *)
+          None)
+    in
     (* Set of actual deriver names *)
     let seen = Hash_set.create (module String) () in
-    List.map derivers ~f:(fun (name, args) ->
+    List.map derivers_and_args ~f:(fun (name, args) ->
       let named_generators = resolve field name in
       List.iter named_generators ~f:(fun (actual_deriver_name, gen) ->
         List.iter (Generator.deps gen) ~f:(fun dep ->
@@ -322,94 +333,7 @@ module Deriver = struct
       (name, List.map named_generators ~f:snd, args))
   ;;
 
-  let export name =
-    let resolve_opt field =
-      match resolve_internal field name with
-      | generators                  -> Some (List.map generators ~f:snd)
-      | exception (Not_supported _) -> None
-    in
-    let str_type_decl = resolve_opt Field.str_type_decl in
-    let str_type_ext  = resolve_opt Field.str_type_ext  in
-    let sig_type_decl = resolve_opt Field.sig_type_decl in
-    let sig_type_ext  = resolve_opt Field.sig_type_ext  in
-    (* Ppx deriving works on the compiler AST while type conv work on the version
-       selected by Ppx_ast, so we need to convert. *)
-    let module Js = Ppx_ast.Selected_ast in
-    let core_type =
-      match Hashtbl.find_exn all name with
-      | Alias _ -> None
-      | Actual_deriver drv ->
-        Option.map drv.extension ~f:(fun f ->
-          fun ty ->
-            Js.of_ocaml Core_type ty
-            |> f ~loc:ty.ptyp_loc ~path:""
-            |> Js.to_ocaml Expression
-        )
-    in
-    let convert_args args =
-      List.map args ~f:(fun (name, expr) ->
-        (name, Js.of_ocaml Expression expr))
-    in
-    let import_path l = String.concat l ~sep:"." in
-    let make_type_decl gens result_kind =
-      Option.map gens ~f:(fun gens ->
-        fun ~options ~path tds ->
-          let path = import_path path in
-          let options = convert_args options in
-          Generator.check_arguments name gens options;
-          let tds = Js.of_ocaml (List Type_declaration) tds in
-          List.concat_map gens ~f:(fun gen ->
-            Generator.apply gen ~name ~loc:Location.none ~path (Recursive, tds) options)
-          |> Js.to_ocaml result_kind)
-    in
-    let make_type_ext gens result_kind =
-      Option.map gens ~f:(fun gens ->
-        fun ~options ~path te ->
-          let path = import_path path in
-          let options = convert_args options in
-          Generator.check_arguments name gens options;
-          let te = Js.of_ocaml Type_extension te in
-          List.concat_map gens ~f:(fun gen ->
-            Generator.apply gen ~name ~loc:Location.none ~path te options)
-          |> Js.to_ocaml result_kind)
-    in
-    let type_decl_str = make_type_decl str_type_decl Structure in
-    let type_decl_sig = make_type_decl sig_type_decl Signature in
-    let type_ext_str  = make_type_ext  str_type_ext  Structure in
-    let type_ext_sig  = make_type_ext  sig_type_ext  Signature in
-    Ppx_deriving.register
-      (Ppx_deriving.create name
-         ?core_type
-         ?type_ext_str
-         ?type_ext_sig
-         ?type_decl_str
-         ?type_decl_sig
-         ())
-  ;;
-
-  (* When connecting with ppx_deriving, both ppx_type_conv and ppx_deriving forwards new
-     derivers to each other. This reference is used to break the loop. *)
-  let disable_import = ref false
-
-  let safe_add ?(connect_with_ppx_deriving=Ppx_deriving.real) id t =
-    (match Hashtbl.add all ~key:id ~data:t with
-     | `Ok -> ()
-     | `Duplicate ->
-       failwith ("ppx_type_conv: generator '" ^ id ^ "' defined multiple times"));
-    if connect_with_ppx_deriving then begin
-      let save = !disable_import in
-      disable_import := true;
-      try
-        export id;
-        disable_import := save
-      with exn ->
-        disable_import := save;
-        raise exn
-    end
-  ;;
-
   let add
-        ?connect_with_ppx_deriving
         ?str_type_decl
         ?str_type_ext
         ?str_exception
@@ -430,7 +354,7 @@ module Deriver = struct
       ; extension
       }
     in
-    safe_add name (Actual_deriver actual_deriver) ?connect_with_ppx_deriving;
+    Ppx_derivers.register name (T (Actual_deriver actual_deriver));
     (match extension with
      | None -> ()
      | Some f ->
@@ -438,93 +362,6 @@ module Deriver = struct
        Ppx_driver.register_transformation ("ppx_type_conv." ^ name)
          ~rules:[ Context_free.Rule.extension extension ]);
     name
-  ;;
-
-  let split_path path = String.split path ~on:'.'
-
-  module Ppx_deriving_import = struct
-    include struct
-      open Migrate_parsetree.OCaml_current.Ast
-      open Parsetree
-
-      type ('output_ast, 'input_ast) generator
-        =  options:(string * expression) list
-        -> path:string list
-        -> 'input_ast
-        -> 'output_ast
-
-      type deriver =
-        { name          : string
-        ; core_type     : (core_type -> expression) option
-        ; type_decl_str : (structure, type_declaration list) generator
-        ; type_ext_str  : (structure, type_extension       ) generator
-        ; type_decl_sig : (signature, type_declaration list) generator
-        ; type_ext_sig  : (signature, type_extension       ) generator
-        }
-    end
-
-    let import d =
-      if !disable_import then () else begin
-        (* Ppx deriving works on the compiler AST while type conv work on the version
-           selected by Ppx_ast, so we need to convert. *)
-        let module Js = Ppx_ast.Selected_ast in
-        let convert_args args =
-          List.map args ~f:(fun (name, expr) ->
-            (name, Js.to_ocaml Expression expr))
-        in
-        let map_type_ext f result_kind =
-          Generator.Imported_from_ppx_deriving
-            { gen = fun ~loc:_ ~path ~args x ->
-                Js.to_ocaml Type_extension x
-                |> f ~options:(convert_args args) ~path:(split_path path)
-                |> Js.of_ocaml result_kind
-            }
-        in
-        let map_type_decl f result_kind =
-          Generator.Imported_from_ppx_deriving
-            { gen = fun ~loc:_ ~path ~args (_rf, x) ->
-                Js.to_ocaml (List Type_declaration) x
-                |> f ~options:(convert_args args) ~path:(split_path path)
-                |> Js.of_ocaml result_kind
-            }
-        in
-        let extension =
-          match d.core_type with
-          | None -> None
-          | Some f ->
-            Some (fun ~loc:_ ~path:_ ct ->
-              Js.to_ocaml Core_type ct
-              |> f
-              |> Js.of_ocaml Expression)
-        in
-        ignore (
-          add d.name ~connect_with_ppx_deriving:false
-            ~str_type_decl: (map_type_decl d.type_decl_str Structure)
-            ~str_type_ext:  (map_type_ext  d.type_ext_str  Structure)
-            ~sig_type_decl: (map_type_decl d.type_decl_sig Signature)
-            ~sig_type_ext:  (map_type_ext  d.type_ext_sig  Signature)
-            ?extension
-          : string
-        )
-      end
-    ;;
-  end
-
-  let import (d : Ppx_deriving.deriver) =
-    Ppx_deriving_import.import
-      { name          = d.name
-      ; core_type     = d.core_type
-      ; type_decl_str = d.type_decl_str
-      ; type_ext_str  = d.type_ext_str
-      ; type_decl_sig = d.type_decl_sig
-      ; type_ext_sig  = d.type_ext_sig
-      }
-
-  let () =
-    if Ppx_deriving.real then begin
-      Ppx_deriving.add_register_hook import;
-      List.iter (Ppx_deriving.derivers ()) ~f:import
-    end
   ;;
 
   let add_alias
@@ -550,15 +387,13 @@ module Deriver = struct
       ; sig_exception = get sig_exception
       }
     in
-    safe_add name (Alias alias);
+    Ppx_derivers.register name (T (Alias alias));
     name
   ;;
 end
 
-let add       = Deriver.add ?connect_with_ppx_deriving:None
+let add       = Deriver.add
 let add_alias = Deriver.add_alias
-
-module Ppx_deriving_import = Deriver.Ppx_deriving_import
 
 (* +-----------------------------------------------------------------+
    | [@@deriving ] parsing                                           |
@@ -577,21 +412,12 @@ let mk_deriving_attr context ~suffix =
     ("type_conv.deriving" ^ suffix)
     context
     Ast_pattern.(
-      let label =
-        map' __ ~f:(fun loc f label ->
-          match label with
-          | Nolabel | Optional _ ->
-            Location.raise_errorf ~loc "non-optional labeled argument expected"
-          | Labelled label ->
-            f label)
-      in
       let generator_name () =
         map' (pexp_ident __) ~f:(fun loc f id -> f (generator_name_of_id loc id))
       in
-      let arg = pack2 (label ** __) in
       let generator () =
         map (generator_name ()) ~f:(fun f x -> f (x, [])) |||
-        pack2 (pexp_apply (generator_name ()) (many arg))
+        pack2 (pexp_apply (generator_name ()) (many __))
       in
       let generators =
         pexp_tuple (many (generator ())) |||
