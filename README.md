@@ -95,4 +95,4 @@ contact the maintainers:
 
   * Jane Street Capital, LLC <opensource@janestreet.com>
 
-Up-to-date information should be available at <https://github.com/janestreet/type_conv>.
+Up-to-date information should be available at <https://github.com/janestreet/ppx_type_conv>.
