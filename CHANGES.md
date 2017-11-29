@@ -1,3 +1,10 @@
+## v0.9.1
+
+- Accept the `ppx_deriving` syntax for derivers arguments
+
+- Backport changes from master to allow better interaction with
+  ppx_deriving 4.2
+
 ## 113.43.00
 
 - Use the new context-free API
