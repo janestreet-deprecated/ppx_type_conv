@@ -40,16 +40,19 @@ end
 type t (** Type of registered type-conv derivers *)
 
 module Generator : sig
+  type deriver = t
   type ('output_ast, 'input_ast) t
 
   val make
     :  ?attributes:Attribute.packed list
+    -> ?deps:deriver list
     -> ('f, 'output_ast) Args.t
     -> (loc:Location.t -> path:string -> 'input_ast -> 'f)
     -> ('output_ast, 'input_ast) t
 
   val make_noarg
     :  ?attributes:Attribute.packed list
+    -> ?deps:deriver list
     -> (loc:Location.t -> path:string -> 'input_ast -> 'output_ast)
     -> ('output_ast, 'input_ast) t
 
@@ -61,7 +64,7 @@ module Generator : sig
     -> 'input_ast
     -> (string * expression) list
     -> 'output_ast
-end
+end with type deriver := t
 
 
 (** Register a new type-conv generator.
@@ -104,28 +107,3 @@ val add_alias
 
 (** Ignore a deriver. So that one can write: [Type_conv.add ... |> Type_conv.ignore] *)
 val ignore : t -> unit
-
-(**/**)
-(* This is used inside Jane Street to make ppx_deriving depend on ppx_type_conv. It's not
-   meant to be used by casual users. *)
-module Ppx_deriving_import : sig
-  open Migrate_parsetree.OCaml_current.Ast
-  open Parsetree
-
-  type ('output_ast, 'input_ast) generator
-    =  options:(string * expression) list
-    -> path:string list
-    -> 'input_ast
-    -> 'output_ast
-
-  type deriver =
-    { name          : string
-    ; core_type     : (core_type -> expression) option
-    ; type_decl_str : (structure, type_declaration list) generator
-    ; type_ext_str  : (structure, type_extension       ) generator
-    ; type_decl_sig : (signature, type_declaration list) generator
-    ; type_ext_sig  : (signature, type_extension       ) generator
-    }
-
-  val import : deriver -> unit
-end
