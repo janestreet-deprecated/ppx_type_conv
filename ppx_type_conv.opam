@@ -7,10 +7,10 @@ bug-reports: "https://github.com/janestreet/ppx_type_conv/issues"
 dev-repo: "https://github.com/janestreet/ppx_type_conv.git"
 license: "Apache-2.0"
 build: [
-  ["jbuilder" "build" "--only-packages" "ppx_type_conv" "--root" "." "-j" jobs "@install"]
+  ["jbuilder" "build" "-p" name "-j" jobs]
 ]
 depends: [
-  "jbuilder"                {build & >= "1.0+beta2"}
+  "jbuilder"                {build & >= "1.0+beta16"}
   "ppx_core"                {>= "v0.9" & < "v0.10"}
   "ppx_driver"              {>= "v0.9" & < "v0.10"}
   "ppx_metaquot"            {>= "v0.9" & < "v0.10"}
