@@ -109,6 +109,10 @@ end
 type t = string
 let ignore (_ : t) = ()
 
+type parsed_args =
+  | Args           of (string * expression) list
+  | Unknown_syntax of Location.t * string
+
 module Generator = struct
   type deriver = t
   type ('a, 'b) t =
@@ -307,12 +311,10 @@ module Deriver = struct
              ppx_deriving uses a different syntax for arguments. *)
           Some
             (name,
-             List.map args ~f:(fun (label, expr) ->
-               match label with
-               | Labelled s -> (s, expr)
-               | _ ->
-                 Location.raise_errorf ~loc:expr.pexp_loc
-                   "ppx_type_conv: non-optional labeled argument expected"))
+             match args with
+             | Args l -> l
+             | Unknown_syntax (loc, msg) ->
+               Location.raise_errorf ~loc "ppx_type_conv: %s" msg)
         | Some _ ->
           (* It's not one of ours, ignore it. *)
           None)
@@ -407,6 +409,40 @@ let generator_name_of_id loc id =
   | exception _ -> invalid_with ~loc:loc
 ;;
 
+exception Unknown_syntax of Location.t * string
+
+let parse_arguments l =
+  try
+    Args (
+      match l with
+      | [(Nolabel, e)] -> begin
+          match e.pexp_desc with
+          | Pexp_record (fields, None)  ->
+            List.map fields ~f:(fun (id, expr) ->
+            let name =
+              match id.txt with
+              | Lident s -> s
+              | _ -> Exn.raise_without_backtrace
+                       (Unknown_syntax
+                          (id.loc, "simple identifier expected"))
+            in
+            (name, expr))
+        | _ ->
+          Exn.raise_without_backtrace
+            (Unknown_syntax
+               (e.pexp_loc, "non-optional labelled argument or record expected"))
+      end
+    | l ->
+      List.map l ~f:(fun (label, expr) ->
+        match label with
+        | Labelled s ->
+          (s, expr)
+        | _ ->
+          raise (Unknown_syntax
+                   (expr.pexp_loc, "non-optional labelled argument expected"))))
+  with Unknown_syntax (loc, msg) ->
+    Unknown_syntax (loc, msg)
+
 let mk_deriving_attr context ~suffix =
   Attribute.declare
     ("type_conv.deriving" ^ suffix)
@@ -416,8 +452,8 @@ let mk_deriving_attr context ~suffix =
         map' (pexp_ident __) ~f:(fun loc f id -> f (generator_name_of_id loc id))
       in
       let generator () =
-        map (generator_name ()) ~f:(fun f x -> f (x, [])) |||
-        pack2 (pexp_apply (generator_name ()) (many __))
+        map (generator_name ()) ~f:(fun f x -> f (x, Args [])) |||
+        pack2 (pexp_apply (generator_name ()) (map1 (many __) ~f:parse_arguments))
       in
       let generators =
         pexp_tuple (many (generator ())) |||
