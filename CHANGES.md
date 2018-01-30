@@ -1,3 +1,11 @@
+## v0.10
+
+- Made `ppx_type_conv` accept the `ppx_deriving` syntax for derivers arguments,
+  which makes it easier for for people to switch from `ppx_deriving` to
+  `ppx_type_conv`.
+
+## v0.9
+
 ## 113.43.00
 
 - Use the new context-free API
