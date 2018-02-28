@@ -9,12 +9,10 @@ build: [
   ["jbuilder" "build" "-p" name "-j" jobs]
 ]
 depends: [
-  "ppx_core"
-  "ppx_driver"
-  "ppx_metaquot"
+  "ppxlib"                {>= "v0.11.0"}
   "jbuilder"                {build & >= "1.0+beta12"}
   "ocaml-migrate-parsetree" {>= "1.0"}
-  "ppx_derivers"
+  "ppx_derivers"            {>= "1.0"}
 ]
 available: [ ocaml-version >= "4.04.1" ]
 descr: "
