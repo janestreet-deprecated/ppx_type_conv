@@ -9,16 +9,10 @@ build: [
   ["jbuilder" "build" "-p" name "-j" jobs]
 ]
 depends: [
-  "ppx_core"
-  "ppx_driver"
-  "ppx_metaquot"
-  "jbuilder"                {build & >= "1.0+beta12"}
-  "ocaml-migrate-parsetree" {>= "1.0"}
-  "ppx_derivers"
+  "jbuilder" {build & >= "1.0+beta18.1"}
+  "ppxlib"   {>= "0.1.1"}
 ]
 available: [ ocaml-version >= "4.04.1" ]
 descr: "
-Support Library for type-driven code generators
-
-Part of the Jane Street's PPX rewriters collection.
+Deprecated: use ppxlib instead
 "

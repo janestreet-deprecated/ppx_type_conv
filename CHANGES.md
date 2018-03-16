@@ -1,3 +1,8 @@
+## v0.11
+
+- Depend on ppxlib instead of (now deprecated) ppx\_core, ppx\_driver and
+  ppx\_metaquot.
+
 ## v0.10
 
 - Made `ppx_type_conv` accept the `ppx_deriving` syntax for derivers arguments,
